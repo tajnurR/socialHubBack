@@ -107,19 +107,30 @@ public class FacebookProvider extends AbstractSocialMediaProvider {
     public ProviderPostPage getPosts(
             String externalAccountId, String accessToken, String cursor, int limit) {
         int effectiveLimit = Math.min(limit <= 0 ? DEFAULT_LIMIT : limit, MAX_LIMIT);
-        GraphDtos.PostsResponse response =
-                graphClient.getPublishedPosts(externalAccountId, accessToken, cursor, effectiveLimit);
+        GraphDtos.PostsResponse response = graphClient.getPublishedPosts(
+                externalAccountId, accessToken, cursor, effectiveLimit, null, null);
 
         List<GraphDtos.Post> data = response.data() != null ? response.data() : List.of();
-        List<ProviderPost> posts = data.stream()
-                .map(p -> new ProviderPost(
-                        p.id(), p.message(), parseTime(p.createdTime()), p.fullPicture(), p.permalinkUrl()))
-                .toList();
+        List<ProviderPost> posts = data.stream().map(this::toProviderPost).toList();
 
         String nextCursor = response.paging() != null && response.paging().cursors() != null
                 ? response.paging().cursors().after()
                 : null;
         return new ProviderPostPage(posts, nextCursor);
+    }
+
+    /** Maps a Graph post (with engagement summaries) to the platform-agnostic DTO. */
+    public ProviderPost toProviderPost(GraphDtos.Post post) {
+        return new ProviderPost(
+                post.id(),
+                post.message(),
+                parseTime(post.createdTime()),
+                post.fullPicture(),
+                post.permalinkUrl(),
+                post.likeCount(),
+                post.commentCount(),
+                post.shareCount(),
+                post.reactionCount());
     }
 
     @Override

@@ -5,6 +5,7 @@ import com.socialhub.socialhubBackend.integration.core.exception.ProviderAuthExc
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.AccountsResponse;
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.CreateResponse;
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.Page;
+import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.PageProfile;
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.PostsResponse;
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.TokenResponse;
 import java.time.Duration;
@@ -64,16 +65,34 @@ public class FacebookGraphClient {
     }
 
     /**
-     * GET /oauth/access_token?grant_type=fb_exchange_token — exchanges a short-lived
-     * user token for a long-lived one. Uses the app id/secret (server-side only).
+     * GET /oauth/access_token?grant_type=client_credentials — validates an app's
+     * id/secret by fetching an app access token. Throws if the credentials are invalid.
      */
-    public TokenResponse exchangeForLongLivedUserToken(String shortLivedUserToken) {
+    public void validateAppCredentials(String appId, String appSecret) {
+        call(
+                () -> client.get()
+                        .uri(uri -> uri.path("/oauth/access_token")
+                                .queryParam("grant_type", "client_credentials")
+                                .queryParam("client_id", appId)
+                                .queryParam("client_secret", appSecret)
+                                .build())
+                        .retrieve()
+                        .body(TokenResponse.class),
+                "validate Facebook app credentials");
+    }
+
+    /**
+     * GET /oauth/access_token?grant_type=fb_exchange_token — exchanges a short-lived
+     * user token for a long-lived one, using the supplied (per-org) app id/secret.
+     */
+    public TokenResponse exchangeForLongLivedUserToken(
+            String shortLivedUserToken, String appId, String appSecret) {
         return call(
                 () -> client.get()
                         .uri(uri -> uri.path("/oauth/access_token")
                                 .queryParam("grant_type", "fb_exchange_token")
-                                .queryParam("client_id", properties.appId())
-                                .queryParam("client_secret", properties.appSecret())
+                                .queryParam("client_id", appId)
+                                .queryParam("client_secret", appSecret)
                                 .queryParam("fb_exchange_token", shortLivedUserToken)
                                 .build())
                         .retrieve()
@@ -110,19 +129,47 @@ public class FacebookGraphClient {
                 "list managed Facebook pages");
     }
 
-    /** GET /{page-id}/published_posts — list posts (with cursor-based pagination). */
+    /** Fields requested for posts, including engagement summaries. */
+    private static final String POST_FIELDS =
+            "id,message,created_time,full_picture,permalink_url,shares,"
+                    + "likes.summary(true),comments.summary(true),reactions.summary(true)";
+
+    /**
+     * GET /{page-id}?fields=name,fan_count,picture,category — page profile for the
+     * dashboard header. Best-effort: callers should tolerate failure.
+     */
+    public PageProfile getPageInfo(String pageId, String accessToken) {
+        return call(
+                () -> client.get()
+                        .uri(uri -> uri.path("/{id}")
+                                .queryParam("fields", "name,fan_count,picture.type(large),category")
+                                .build(pageId))
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .retrieve()
+                        .body(PageProfile.class),
+                "load Facebook page info");
+    }
+
+    /**
+     * GET /{page-id}/published_posts — list posts with engagement counts
+     * (cursor pagination; optional {@code since}/{@code until} date range).
+     */
     public PostsResponse getPublishedPosts(
-            String pageId, String accessToken, String after, int limit) {
+            String pageId, String accessToken, String after, int limit, String since, String until) {
         return call(
                 () -> client.get()
                         .uri(uri -> {
                             uri.path("/{id}/published_posts")
-                                    .queryParam(
-                                            "fields",
-                                            "id,message,created_time,full_picture,permalink_url")
+                                    .queryParam("fields", POST_FIELDS)
                                     .queryParam("limit", limit);
                             if (after != null && !after.isBlank()) {
                                 uri.queryParam("after", after);
+                            }
+                            if (since != null && !since.isBlank()) {
+                                uri.queryParam("since", since);
+                            }
+                            if (until != null && !until.isBlank()) {
+                                uri.queryParam("until", until);
                             }
                             return uri.build(pageId);
                         })

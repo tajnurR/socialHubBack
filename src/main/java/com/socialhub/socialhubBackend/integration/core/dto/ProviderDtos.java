@@ -26,13 +26,17 @@ public final class ProviderDtos {
     /** Command to create a post. {@code link} optional; media fields added later. */
     public record CreatePostCommand(String message, String link) {}
 
-    /** A post as represented by the external platform. */
+    /** A post as represented by the external platform, with engagement counts. */
     public record ProviderPost(
             String externalId,
             String message,
             Instant createdTime,
             String fullPicture,
-            String permalinkUrl) {}
+            String permalinkUrl,
+            long likeCount,
+            long commentCount,
+            long shareCount,
+            long reactionCount) {}
 
     /** A page of posts plus an opaque cursor for the next page (null if none). */
     public record ProviderPostPage(List<ProviderPost> posts, String nextCursor) {}

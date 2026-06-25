@@ -12,6 +12,25 @@ public final class GraphDtos {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Page(String id, String name, @JsonProperty("access_token") String accessToken) {}
 
+    /** Page profile info for the dashboard header (best-effort; fields may be absent). */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record PageProfile(
+            String id,
+            String name,
+            String category,
+            @JsonProperty("fan_count") Long fanCount,
+            Picture picture) {
+        public String pictureUrl() {
+            return picture != null && picture.data() != null ? picture.data().url() : null;
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Picture(PictureData data) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record PictureData(String url) {}
+
     /** Response of GET /me/accounts — pages the (user) token manages, each with a Page token. */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record AccountsResponse(List<Page> data) {}
@@ -25,7 +44,43 @@ public final class GraphDtos {
             String message,
             @JsonProperty("created_time") String createdTime,
             @JsonProperty("full_picture") String fullPicture,
-            @JsonProperty("permalink_url") String permalinkUrl) {}
+            @JsonProperty("permalink_url") String permalinkUrl,
+            Shares shares,
+            Engagement likes,
+            Engagement comments,
+            Engagement reactions) {
+
+        public long likeCount() {
+            return likes != null ? likes.totalCount() : 0L;
+        }
+
+        public long commentCount() {
+            return comments != null ? comments.totalCount() : 0L;
+        }
+
+        public long shareCount() {
+            return shares != null && shares.count() != null ? shares.count() : 0L;
+        }
+
+        public long reactionCount() {
+            return reactions != null ? reactions.totalCount() : 0L;
+        }
+    }
+
+    /** {@code shares} object on a post ({@code {"count": N}}); absent when zero. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Shares(Long count) {}
+
+    /** {@code likes}/{@code comments} edge requested with {@code .summary(true)}. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Engagement(Summary summary) {
+        public long totalCount() {
+            return summary != null && summary.totalCount() != null ? summary.totalCount() : 0L;
+        }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Summary(@JsonProperty("total_count") Long totalCount) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Paging(Cursors cursors, String next) {}

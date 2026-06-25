@@ -7,12 +7,13 @@ import com.socialhub.socialhubBackend.integration.core.dto.IntegrationResponse;
 import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.ProviderAccount;
 import com.socialhub.socialhubBackend.integration.core.service.IntegrationService;
 import com.socialhub.socialhubBackend.integration.facebook.FacebookExchangeStore.PageToken;
+import com.socialhub.socialhubBackend.integration.facebook.credential.FacebookAppCredentialProvider;
+import com.socialhub.socialhubBackend.integration.facebook.credential.FacebookAppCredentials;
 import com.socialhub.socialhubBackend.integration.facebook.dto.FacebookOAuthDtos.ExchangeResponse;
 import com.socialhub.socialhubBackend.integration.facebook.dto.FacebookOAuthDtos.PageOption;
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos;
 import java.time.Instant;
 import java.util.List;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /**
@@ -30,17 +31,17 @@ public class FacebookOAuthService {
 
     private static final String TOKEN_TYPE = "PAGE_OAUTH";
 
-    private final FacebookProperties properties;
+    private final FacebookAppCredentialProvider appCredentialProvider;
     private final FacebookGraphClient graphClient;
     private final FacebookExchangeStore exchangeStore;
     private final IntegrationService integrationService;
 
     public FacebookOAuthService(
-            FacebookProperties properties,
+            FacebookAppCredentialProvider appCredentialProvider,
             FacebookGraphClient graphClient,
             FacebookExchangeStore exchangeStore,
             IntegrationService integrationService) {
-        this.properties = properties;
+        this.appCredentialProvider = appCredentialProvider;
         this.graphClient = graphClient;
         this.exchangeStore = exchangeStore;
         this.integrationService = integrationService;
@@ -48,10 +49,11 @@ public class FacebookOAuthService {
 
     /** Exchange the short-lived user token and return the pages the user can connect. */
     public ExchangeResponse exchange(String shortLivedToken) {
-        requireOauthConfigured();
+        // Resolve the org's own Meta app credentials (throws if not configured yet).
+        FacebookAppCredentials credentials = appCredentialProvider.resolve();
 
-        GraphDtos.TokenResponse longLived =
-                graphClient.exchangeForLongLivedUserToken(shortLivedToken);
+        GraphDtos.TokenResponse longLived = graphClient.exchangeForLongLivedUserToken(
+                shortLivedToken, credentials.appId(), credentials.appSecret());
         GraphDtos.AccountsResponse accounts = graphClient.getManagedPages(longLived.accessToken());
 
         List<GraphDtos.Page> data =
@@ -107,14 +109,5 @@ public class FacebookOAuthService {
         GraphDtos.Page validated = graphClient.getPage(page.pageId(), page.accessToken());
         String name = validated.name() != null ? validated.name() : page.name();
         return new ProviderAccount(SocialPlatform.FACEBOOK, page.pageId(), name, page.accessToken());
-    }
-
-    private void requireOauthConfigured() {
-        if (!properties.oauthConfigured()) {
-            throw new BusinessException(
-                    "Facebook login is not configured on the server (missing app id/secret). "
-                            + "Use the manual connect option instead.",
-                    HttpStatus.SERVICE_UNAVAILABLE);
-        }
     }
 }
