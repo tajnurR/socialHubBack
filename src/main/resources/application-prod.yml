@@ -1,0 +1,27 @@
+# Production profile: no SQL logging, structured (JSON) console logs, hardened actuator.
+# Every value below is expected to be supplied via environment variables.
+spring:
+  jpa:
+    show-sql: false
+  datasource:
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:20}
+      minimum-idle: ${DB_POOL_MIN_IDLE:5}
+
+server:
+  # Respect X-Forwarded-* headers when running behind a load balancer / reverse proxy.
+  forward-headers-strategy: framework
+
+management:
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  # Emit structured JSON logs (ECS format) for ingestion by log aggregators.
+  structured:
+    format:
+      console: ecs
+  level:
+    root: INFO
+    com.socialhub: INFO
