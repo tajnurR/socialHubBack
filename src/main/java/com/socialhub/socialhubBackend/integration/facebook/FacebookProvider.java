@@ -14,6 +14,8 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -25,6 +27,8 @@ import org.springframework.stereotype.Component;
 public class FacebookProvider extends AbstractSocialMediaProvider {
 
     /** Graph returns e.g. {@code 2024-01-31T12:00:00+0000} (offset without a colon). */
+    private static final Logger log = LoggerFactory.getLogger(FacebookProvider.class);
+
     private static final DateTimeFormatter GRAPH_TIME =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssZ");
     private static final int DEFAULT_LIMIT = 25;
@@ -56,7 +60,47 @@ public class FacebookProvider extends AbstractSocialMediaProvider {
 
         GraphDtos.Page page = graphClient.getPage(pageId, accessToken);
         String resolvedId = page.id() != null ? page.id() : pageId;
-        return new ProviderAccount(SocialPlatform.FACEBOOK, resolvedId, page.name(), accessToken);
+
+        // Persist a Page-scoped token so page-only edges (published_posts, /feed) don't
+        // fail with #210. Resolve it in order of reliability:
+        //   1. the access_token echoed by GET /{pageId}?fields=access_token, then
+        //   2. GET /me/accounts (canonical for a User token that manages the Page), then
+        //   3. fall back to the supplied token (assume it is already a Page token).
+        String pageToken = page.accessToken();
+        if (isBlank(pageToken)) {
+            pageToken = derivePageTokenFromAccounts(resolvedId, accessToken);
+        }
+        if (isBlank(pageToken)) {
+            pageToken = accessToken;
+        }
+        return new ProviderAccount(SocialPlatform.FACEBOOK, resolvedId, page.name(), pageToken);
+    }
+
+    /**
+     * Looks up the Page access token via {@code /me/accounts} (valid for a User token
+     * that manages the Page). Returns {@code null} if it can't be resolved.
+     */
+    private String derivePageTokenFromAccounts(String pageId, String userToken) {
+        try {
+            GraphDtos.AccountsResponse accounts = graphClient.getManagedPages(userToken);
+            if (accounts != null && accounts.data() != null) {
+                return accounts.data().stream()
+                        .filter(p -> pageId.equals(p.id()))
+                        .map(GraphDtos.Page::accessToken)
+                        .filter(token -> !isBlank(token))
+                        .findFirst()
+                        .orElse(null);
+            }
+        } catch (RuntimeException ex) {
+            // /me/accounts is not valid for a Page token, or the token lacks pages_show_list.
+            log.debug("Could not derive page token from /me/accounts for page {}: {}",
+                    pageId, ex.getMessage());
+        }
+        return null;
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     @Override

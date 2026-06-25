@@ -7,6 +7,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
+import java.time.Instant;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -41,4 +42,15 @@ public class SocialIntegration extends TenantBaseEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
     private IntegrationStatus status = IntegrationStatus.CONNECTED;
+
+    /** How the token was obtained, e.g. {@code MANUAL}, {@code PAGE_OAUTH}. */
+    @Column(name = "token_type", length = 40)
+    private String tokenType;
+
+    @Column(name = "token_obtained_at")
+    private Instant tokenObtainedAt;
+
+    /** When the token expires; {@code null} for non-expiring Page tokens. */
+    @Column(name = "token_expires_at")
+    private Instant tokenExpiresAt;
 }

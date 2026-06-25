@@ -15,4 +15,7 @@ public record IntegrationResponse(
         String displayName,
         IntegrationStatus status,
         String accessTokenMasked,
+        String tokenType,
+        Instant tokenObtainedAt,
+        Instant tokenExpiresAt,
         Instant createdAt) {}

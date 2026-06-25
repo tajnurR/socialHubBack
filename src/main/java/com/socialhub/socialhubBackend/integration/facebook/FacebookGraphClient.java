@@ -1,9 +1,12 @@
 package com.socialhub.socialhubBackend.integration.facebook;
 
 import com.socialhub.socialhubBackend.common.exception.BusinessException;
+import com.socialhub.socialhubBackend.integration.core.exception.ProviderAuthException;
+import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.AccountsResponse;
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.CreateResponse;
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.Page;
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.PostsResponse;
+import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.TokenResponse;
 import java.time.Duration;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
@@ -47,8 +50,10 @@ public class FacebookGraphClient {
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(15);
 
     private final RestClient client;
+    private final FacebookProperties properties;
 
     public FacebookGraphClient(FacebookProperties properties) {
+        this.properties = properties;
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout((int) CONNECT_TIMEOUT.toMillis());
         requestFactory.setReadTimeout((int) READ_TIMEOUT.toMillis());
@@ -58,16 +63,51 @@ public class FacebookGraphClient {
                 .build();
     }
 
-    /** GET /{page-id}?fields=name — validates the Page Access Token against the Page. */
+    /**
+     * GET /oauth/access_token?grant_type=fb_exchange_token — exchanges a short-lived
+     * user token for a long-lived one. Uses the app id/secret (server-side only).
+     */
+    public TokenResponse exchangeForLongLivedUserToken(String shortLivedUserToken) {
+        return call(
+                () -> client.get()
+                        .uri(uri -> uri.path("/oauth/access_token")
+                                .queryParam("grant_type", "fb_exchange_token")
+                                .queryParam("client_id", properties.appId())
+                                .queryParam("client_secret", properties.appSecret())
+                                .queryParam("fb_exchange_token", shortLivedUserToken)
+                                .build())
+                        .retrieve()
+                        .body(TokenResponse.class),
+                "exchange Facebook token");
+    }
+
+    /**
+     * GET /{page-id}?fields=name,access_token — validates the token and resolves the
+     * Page-scoped access token (Graph returns it when the caller manages the Page).
+     */
     public Page getPage(String pageId, String accessToken) {
         log.debug("Validating Facebook page id={} with token={}", pageId, mask(accessToken));
         return call(
                 () -> client.get()
-                        .uri(uri -> uri.path("/{id}").queryParam("fields", "name").build(pageId))
+                        .uri(uri -> uri.path("/{id}").queryParam("fields", "name,access_token").build(pageId))
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
                         .retrieve()
                         .body(Page.class),
                 "validate Facebook page");
+    }
+
+    /** GET /me/accounts — pages the (user) token manages, each with its Page access token. */
+    public AccountsResponse getManagedPages(String accessToken) {
+        return call(
+                () -> client.get()
+                        .uri(uri -> uri.path("/me/accounts")
+                                .queryParam("fields", "id,name,access_token")
+                                .queryParam("limit", 200)
+                                .build())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .retrieve()
+                        .body(AccountsResponse.class),
+                "list managed Facebook pages");
     }
 
     /** GET /{page-id}/published_posts — list posts (with cursor-based pagination). */
@@ -129,7 +169,7 @@ public class FacebookGraphClient {
                     error.subcode(),
                     error.type(),
                     error.message());
-            throw mapGraphError(error, action);
+            throw mapGraphError(error, ex.getStatusCode().value(), action);
         } catch (ResourceAccessException ex) {
             // Could not get an HTTP response at all: DNS, connect/read timeout, SSL, proxy.
             Throwable root = NestedExceptionUtils.getMostSpecificCause(ex);
@@ -149,26 +189,36 @@ public class FacebookGraphClient {
         }
     }
 
-    /** Maps a parsed Graph error to a specific, user-facing message. */
-    private BusinessException mapGraphError(GraphError error, String action) {
+    /** Maps a parsed Graph error to a specific, user-facing exception. */
+    private BusinessException mapGraphError(GraphError error, int httpStatus, String action) {
         Integer code = error.code();
         Integer subcode = error.subcode();
         String fbMessage = error.message() != null ? error.message() : "unknown error";
         String lower = fbMessage.toLowerCase();
-        String message;
 
-        if (code != null && code == 190) {
-            if (subcode != null && (subcode == 463 || subcode == 467)) {
-                message = "Your Facebook Page Access Token has expired. "
-                        + "Generate a fresh Page access token and try again.";
-            } else if (lower.contains("decrypt") || lower.contains("cannot parse")
-                    || lower.contains("malformed")) {
-                message = "The Page Access Token looks malformed. Paste the exact Page access "
-                        + "token (no surrounding spaces or quotes).";
-            } else {
-                message = "Invalid or expired Page Access Token. Make sure you pasted a Page "
-                        + "access token (not a User token) for this Page.";
+        // Auth failures (invalid/expired/revoked token) → signal re-authentication.
+        boolean tokenExpired = subcode != null && (subcode == 463 || subcode == 467);
+        if (httpStatus == 401 || (code != null && code == 190)) {
+            if (tokenExpired) {
+                return new ProviderAuthException(
+                        "Your Facebook access has expired. Reconnect the integration.");
             }
+            if (lower.contains("decrypt") || lower.contains("cannot parse")
+                    || lower.contains("malformed")) {
+                return new ProviderAuthException(
+                        "The access token looks malformed. Reconnect, or paste the exact Page "
+                                + "access token (no surrounding spaces or quotes).");
+            }
+            return new ProviderAuthException(
+                    "Facebook rejected the stored token (invalid or expired). Reconnect the "
+                            + "integration.");
+        }
+
+        String message;
+        if (code != null && code == 210) {
+            message = "Facebook needs a Page access token for this action. Reconnect the "
+                    + "integration using a Page access token (or a User token that manages "
+                    + "this Page so a Page token can be derived).";
         } else if (code != null && (code == 10 || code == 200 || code == 3)) {
             message = "The token is missing permissions for this Page "
                     + "(needs pages_read_engagement and pages_manage_posts).";
