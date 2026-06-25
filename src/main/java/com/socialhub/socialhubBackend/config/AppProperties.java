@@ -7,11 +7,13 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * Type-safe binding of the {@code app.*} configuration tree (see application.yml).
  *
  * @param cors     CORS settings applied by {@code SecurityConfig}
- * @param security high-level security toggles; {@code enabled=false} keeps the API
- *                 open during development until SSO is wired
+ * @param security high-level security toggles ({@code enabled=false} keeps the API
+ *                 open during development until SSO is wired)
+ * @param crypto   secret used to encrypt data at rest (e.g. integration tokens)
+ * @param tenant   tenancy defaults (dev fallback organization until SSO provides it)
  */
 @ConfigurationProperties(prefix = "app")
-public record AppProperties(Cors cors, Security security) {
+public record AppProperties(Cors cors, Security security, Crypto crypto, Tenant tenant) {
 
     public record Cors(
             List<String> allowedOrigins,
@@ -20,4 +22,8 @@ public record AppProperties(Cors cors, Security security) {
             boolean allowCredentials) {}
 
     public record Security(boolean enabled) {}
+
+    public record Crypto(String secret) {}
+
+    public record Tenant(Long defaultOrganizationId) {}
 }

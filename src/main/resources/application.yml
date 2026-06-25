@@ -55,6 +55,18 @@ app:
     # TODO[SSO]: flip to true and configure an OAuth2/OIDC resource server.
     # While false, SecurityConfig permits all requests so development isn't blocked.
     enabled: false
+  crypto:
+    # Secret used to encrypt integration access tokens at rest (AES-GCM).
+    # MUST be overridden with a strong, stable value per environment in prod.
+    secret: ${APP_ENCRYPTION_SECRET:change-me-dev-secret-please-rotate}
+  tenant:
+    # Dev fallback organization when no X-Organization-Id is present.
+    # TODO[SSO]: the org will come from the authenticated principal instead.
+    default-organization-id: ${DEFAULT_ORGANIZATION_ID:1}
+  integration:
+    facebook:
+      graph-base-url: ${FACEBOOK_GRAPH_BASE_URL:https://graph.facebook.com}
+      api-version: ${FACEBOOK_GRAPH_API_VERSION:v25.0}
 
 springdoc:
   api-docs:

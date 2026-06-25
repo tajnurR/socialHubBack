@@ -16,4 +16,9 @@ public class WhatsAppProvider extends AbstractSocialMediaProvider {
     public SocialPlatform platform() {
         return SocialPlatform.WHATSAPP;
     }
+
+    @Override
+    public boolean isEnabled() {
+        return false; // "coming soon" — not selectable yet
+    }
 }

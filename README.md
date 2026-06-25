@@ -94,6 +94,14 @@ Build / test: `./mvnw clean package` (tests run against in-memory H2 via the
 |--------|-----------------------------------|----------------------------------|
 | GET    | `/api/v1/organizations`           | List organizations               |
 | GET    | `/api/v1/organizations/{id}`      | Get one organization             |
-| GET    | `/api/v1/integrations/providers`  | List registered platform providers |
 | GET    | `/api/v1/analytics/summary`       | Aggregated analytics (placeholder) |
+| GET    | `/api/v1/integrations/providers`  | List selectable platforms (+ enabled flag) |
+| GET    | `/api/v1/integrations`            | List connected integrations (org-scoped) |
+| POST   | `/api/v1/integrations`            | Connect a platform (validates credentials) |
+| DELETE | `/api/v1/integrations/{id}`       | Disconnect an integration        |
+| GET    | `/api/v1/integrations/{id}/posts` | List posts (cursor pagination)   |
+| POST   | `/api/v1/integrations/{id}/posts` | Create a post                    |
+
+Integration requests are organization-scoped (via `X-Organization-Id` for now;
+see SSO note). Access tokens are encrypted at rest and never returned.
 # socialHubBack

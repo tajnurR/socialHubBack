@@ -16,4 +16,9 @@ public class InstagramProvider extends AbstractSocialMediaProvider {
     public SocialPlatform platform() {
         return SocialPlatform.INSTAGRAM;
     }
+
+    @Override
+    public boolean isEnabled() {
+        return false; // "coming soon" — not selectable yet
+    }
 }

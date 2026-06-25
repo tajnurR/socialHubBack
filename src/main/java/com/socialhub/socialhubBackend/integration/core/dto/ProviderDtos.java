@@ -2,34 +2,41 @@ package com.socialhub.socialhubBackend.integration.core.dto;
 
 import com.socialhub.socialhubBackend.integration.core.SocialPlatform;
 import java.time.Instant;
-import java.util.Map;
+import java.util.List;
 
 /**
- * Platform-agnostic DTOs exchanged with {@code SocialMediaProvider}
- * implementations. Grouped here so the common contract lives in one place;
- * split into separate files if they grow.
+ * Platform-agnostic DTOs exchanged with {@code SocialMediaProvider} implementations.
+ *
+ * <p>Raw, platform-specific credentials (a key/value map) are only used at connect
+ * time. After validation everything is normalized to an {@code externalAccountId}
+ * + {@code accessToken} pair, so the rest of the system stays platform-agnostic.
  */
 public final class ProviderDtos {
 
     private ProviderDtos() {}
 
-    /** Result of authorizing/connecting an external account. */
+    /**
+     * Result of validating credentials against the platform. Carries the
+     * normalized identifiers to persist (the {@code accessToken} here is the
+     * plaintext token the service will encrypt before storing).
+     */
     public record ProviderAccount(
-            SocialPlatform platform, String externalAccountId, String displayName) {}
+            SocialPlatform platform, String externalAccountId, String displayName, String accessToken) {}
 
-    /** Command to connect an external account (credentials are platform-specific). */
-    public record ConnectAccountCommand(Long organizationId, Map<String, String> credentials) {}
-
-    /** Command to publish content to a connected account. */
-    public record PublishPostCommand(String externalAccountId, String content) {}
-
-    /** Outcome of a publish attempt. */
-    public record PublishResult(String externalPostId, boolean accepted, String message) {}
+    /** Command to create a post. {@code link} optional; media fields added later. */
+    public record CreatePostCommand(String message, String link) {}
 
     /** A post as represented by the external platform. */
-    public record ProviderPost(String externalPostId, String content, Instant publishedAt) {}
+    public record ProviderPost(
+            String externalId,
+            String message,
+            Instant createdTime,
+            String fullPicture,
+            String permalinkUrl) {}
 
-    /** Engagement metrics for a single post. */
-    public record ProviderMetrics(
-            String externalPostId, long impressions, long likes, long comments, long shares) {}
+    /** A page of posts plus an opaque cursor for the next page (null if none). */
+    public record ProviderPostPage(List<ProviderPost> posts, String nextCursor) {}
+
+    /** Reference to a newly created post. */
+    public record ProviderPostRef(String externalPostId) {}
 }

@@ -23,8 +23,8 @@ import lombok.Setter;
 @Table(name = "posts")
 public class Post extends TenantBaseEntity {
 
-    @Column(name = "social_account_id")
-    private Long socialAccountId;
+    @Column(name = "social_integration_id")
+    private Long socialIntegrationId;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)

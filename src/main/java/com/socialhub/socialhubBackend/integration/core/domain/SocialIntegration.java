@@ -11,26 +11,34 @@ import lombok.Getter;
 import lombok.Setter;
 
 /**
- * A social platform account connected by an organization. The link between a
- * tenant and an external account a provider operates on.
+ * A connected social platform account, scoped to an organization.
+ *
+ * <p>Holds the credentials needed to act on the account. {@code accessToken} is
+ * stored <b>encrypted at rest</b> (AES-GCM via {@code EncryptionService}) and is
+ * never exposed through the API — response DTOs mask it.
  */
 @Getter
 @Setter
 @Entity
-@Table(name = "social_accounts")
-public class SocialAccount extends TenantBaseEntity {
+@Table(name = "social_integrations")
+public class SocialIntegration extends TenantBaseEntity {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
     private SocialPlatform platform;
 
+    /** Platform-side account identifier (e.g. Facebook Page ID). */
     @Column(name = "external_account_id", nullable = false, length = 255)
     private String externalAccountId;
+
+    /** Encrypted access token (ciphertext). Decrypt only when calling the platform. */
+    @Column(name = "access_token", nullable = false, columnDefinition = "text")
+    private String accessToken;
 
     @Column(name = "display_name", length = 255)
     private String displayName;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
-    private AccountStatus status = AccountStatus.PENDING;
+    private IntegrationStatus status = IntegrationStatus.CONNECTED;
 }
