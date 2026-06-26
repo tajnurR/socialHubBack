@@ -13,6 +13,7 @@ import com.socialhub.socialhubBackend.integration.facebook.credential.FacebookAp
 import com.socialhub.socialhubBackend.integration.facebook.dto.FacebookOAuthDtos.ExchangeResponse;
 import com.socialhub.socialhubBackend.integration.facebook.dto.FacebookOAuthDtos.PageOption;
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos;
+import com.socialhub.socialhubBackend.user.context.CurrentUserProvider;
 import java.time.Instant;
 import java.util.List;
 import org.springframework.stereotype.Service;
@@ -36,16 +37,19 @@ public class FacebookOAuthService {
     private final FacebookGraphClient graphClient;
     private final FacebookExchangeStore exchangeStore;
     private final IntegrationService integrationService;
+    private final CurrentUserProvider currentUserProvider;
 
     public FacebookOAuthService(
             FacebookAppCredentialProvider appCredentialProvider,
             FacebookGraphClient graphClient,
             FacebookExchangeStore exchangeStore,
-            IntegrationService integrationService) {
+            IntegrationService integrationService,
+            CurrentUserProvider currentUserProvider) {
         this.appCredentialProvider = appCredentialProvider;
         this.graphClient = graphClient;
         this.exchangeStore = exchangeStore;
         this.integrationService = integrationService;
+        this.currentUserProvider = currentUserProvider;
     }
 
     /** Exchange the short-lived user token and return the pages the user can connect. */
@@ -70,7 +74,11 @@ public class FacebookOAuthService {
                             + "access to a Page and the pages_show_list permission.");
         }
 
-        String exchangeId = exchangeStore.put(credentials.configId(), credentials.apiVersion(), pages);
+        String exchangeId = exchangeStore.put(
+                currentUserProvider.currentUser().userId(),
+                credentials.configId(),
+                credentials.apiVersion(),
+                pages);
         List<PageOption> options = pages.stream()
                 .map(p -> new PageOption(p.pageId(), p.name()))
                 .toList();
@@ -104,9 +112,15 @@ public class FacebookOAuthService {
     }
 
     private ExchangeMeta metaOrThrow(String exchangeId) {
-        return exchangeStore.meta(exchangeId)
+        ExchangeMeta meta = exchangeStore.meta(exchangeId)
                 .orElseThrow(() -> new BusinessException(
                         "Your Facebook session expired. Please connect with Facebook again."));
+        // Isolation: an exchange may only be completed by the user who started it.
+        if (!meta.userId().equals(currentUserProvider.currentUser().userId())) {
+            throw new BusinessException(
+                    "Your Facebook session expired. Please connect with Facebook again.");
+        }
+        return meta;
     }
 
     private PageToken resolveOrThrow(String exchangeId, String pageId) {

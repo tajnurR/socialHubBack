@@ -28,18 +28,21 @@ public class FacebookExchangeStore {
     /** A page the authorizing user manages, with its (sensitive) Page access token. */
     public record PageToken(String pageId, String name, String accessToken) {}
 
-    /** The app config used for an exchange (to link the connection + pick the Graph version). */
-    public record ExchangeMeta(Long configId, String apiVersion) {}
+    /** The owning user + app config of an exchange (link the connection, pick version, verify owner). */
+    public record ExchangeMeta(Long userId, Long configId, String apiVersion) {}
 
-    private record Entry(Instant expiresAt, Long configId, String apiVersion, List<PageToken> pages) {}
+    private record Entry(
+            Instant expiresAt, Long userId, Long configId, String apiVersion, List<PageToken> pages) {}
 
     private final Map<String, Entry> store = new ConcurrentHashMap<>();
 
-    /** Stores the resolved pages + the app config used; returns an opaque exchange id. */
-    public String put(Long configId, String apiVersion, List<PageToken> pages) {
+    /** Stores the resolved pages + the owning user/app config; returns an opaque exchange id. */
+    public String put(Long userId, Long configId, String apiVersion, List<PageToken> pages) {
         evictExpired();
         String exchangeId = UUID.randomUUID().toString();
-        store.put(exchangeId, new Entry(Instant.now().plus(TTL), configId, apiVersion, List.copyOf(pages)));
+        store.put(
+                exchangeId,
+                new Entry(Instant.now().plus(TTL), userId, configId, apiVersion, List.copyOf(pages)));
         return exchangeId;
     }
 
@@ -55,7 +58,7 @@ public class FacebookExchangeStore {
         Entry entry = current(exchangeId);
         return entry == null
                 ? Optional.empty()
-                : Optional.of(new ExchangeMeta(entry.configId(), entry.apiVersion()));
+                : Optional.of(new ExchangeMeta(entry.userId(), entry.configId(), entry.apiVersion()));
     }
 
     private Entry current(String exchangeId) {

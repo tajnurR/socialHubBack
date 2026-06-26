@@ -21,7 +21,8 @@ import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.Provider
 import com.socialhub.socialhubBackend.integration.core.exception.ProviderAuthException;
 import com.socialhub.socialhubBackend.integration.core.mapper.IntegrationMapper;
 import com.socialhub.socialhubBackend.integration.core.repository.SocialIntegrationRepository;
-import com.socialhub.socialhubBackend.tenant.service.OrganizationContextService;
+import com.socialhub.socialhubBackend.user.context.CurrentUser;
+import com.socialhub.socialhubBackend.user.context.CurrentUserProvider;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
@@ -47,7 +48,7 @@ public class IntegrationService {
     private final SocialIntegrationRepository repository;
     private final IntegrationMapper mapper;
     private final EncryptionService encryptionService;
-    private final OrganizationContextService organizationContext;
+    private final CurrentUserProvider currentUserProvider;
     private final IntegrationStatusUpdater statusUpdater;
 
     public IntegrationService(
@@ -55,13 +56,13 @@ public class IntegrationService {
             SocialIntegrationRepository repository,
             IntegrationMapper mapper,
             EncryptionService encryptionService,
-            OrganizationContextService organizationContext,
+            CurrentUserProvider currentUserProvider,
             IntegrationStatusUpdater statusUpdater) {
         this.registry = registry;
         this.repository = repository;
         this.mapper = mapper;
         this.encryptionService = encryptionService;
-        this.organizationContext = organizationContext;
+        this.currentUserProvider = currentUserProvider;
         this.statusUpdater = statusUpdater;
     }
 
@@ -74,8 +75,8 @@ public class IntegrationService {
     }
 
     public List<IntegrationResponse> listConnected() {
-        Long organizationId = organizationContext.currentOrganizationId();
-        return repository.findByOrganizationId(organizationId).stream()
+        CurrentUser user = currentUserProvider.currentUser();
+        return repository.findByOrganizationIdAndUserId(user.organizationId(), user.userId()).stream()
                 .map(mapper::toResponse)
                 .toList();
     }
@@ -105,15 +106,16 @@ public class IntegrationService {
             String tokenType,
             Instant expiresAt,
             Long appCredentialId) {
-        Long organizationId = organizationContext.currentOrganizationId();
-        if (repository.existsByOrganizationIdAndPlatformAndExternalAccountId(
-                organizationId, platform, account.externalAccountId())) {
+        CurrentUser user = currentUserProvider.currentUser();
+        if (repository.existsByOrganizationIdAndUserIdAndPlatformAndExternalAccountId(
+                user.organizationId(), user.userId(), platform, account.externalAccountId())) {
             throw new BusinessException(
                     "This account is already connected. Use reconnect to refresh its token.",
                     HttpStatus.CONFLICT);
         }
         SocialIntegration integration = new SocialIntegration();
-        integration.setOrganizationId(organizationId);
+        integration.setOrganizationId(user.organizationId());
+        integration.setUserId(user.userId());
         integration.setPlatform(platform);
         integration.setExternalAccountId(account.externalAccountId());
         integration.setDisplayName(account.displayName());
@@ -179,11 +181,16 @@ public class IntegrationService {
         }
     }
 
-    /** Fetches an integration scoped to the current organization, or 404. */
+    /**
+     * Fetches an integration owned by the current user, or 404. This is the single
+     * ownership gate every by-id operation (posts, analytics, disconnect, reauth)
+     * goes through — a resource not owned by the current user is indistinguishable
+     * from one that doesn't exist.
+     */
     public SocialIntegration getOwnedIntegration(Long id) {
-        Long organizationId = organizationContext.currentOrganizationId();
+        CurrentUser user = currentUserProvider.currentUser();
         return repository
-                .findByIdAndOrganizationId(id, organizationId)
+                .findByIdAndOrganizationIdAndUserId(id, user.organizationId(), user.userId())
                 .orElseThrow(() -> new ResourceNotFoundException("Integration", id));
     }
 }

@@ -24,6 +24,10 @@ import lombok.Setter;
 @Table(name = "social_integrations")
 public class SocialIntegration extends TenantBaseEntity {
 
+    /** Owning user (within the organization) — connections are isolated per user. */
+    @Column(name = "user_id", nullable = false, updatable = false)
+    private Long userId;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
     private SocialPlatform platform;

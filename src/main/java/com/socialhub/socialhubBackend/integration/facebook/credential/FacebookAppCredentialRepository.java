@@ -15,6 +15,7 @@ public interface FacebookAppCredentialRepository extends JpaRepository<FacebookA
     Optional<FacebookAppCredential> findFirstByOrganizationIdAndUserIdOrderByIdAsc(
             Long organizationId, Long userId);
 
-    /** A specific app config, tenant-scoped. */
-    Optional<FacebookAppCredential> findByIdAndOrganizationId(Long id, Long organizationId);
+    /** A specific app config owned by a user (ownership-checked). */
+    Optional<FacebookAppCredential> findByIdAndOrganizationIdAndUserId(
+            Long id, Long organizationId, Long userId);
 }

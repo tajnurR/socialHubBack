@@ -39,9 +39,9 @@ public class DbFacebookAppCredentialProvider implements FacebookAppCredentialPro
 
     @Override
     public FacebookAppCredentials resolveById(Long configId) {
-        Long organizationId = currentUserProvider.currentUser().organizationId();
+        CurrentUser user = currentUserProvider.currentUser();
         FacebookAppCredential credential = repository
-                .findByIdAndOrganizationId(configId, organizationId)
+                .findByIdAndOrganizationIdAndUserId(configId, user.organizationId(), user.userId())
                 .orElseThrow(() -> new BusinessException("Facebook app configuration not found: " + configId));
         return toCredentials(credential);
     }
@@ -51,9 +51,9 @@ public class DbFacebookAppCredentialProvider implements FacebookAppCredentialPro
         if (configId == null) {
             return null;
         }
-        Long organizationId = currentUserProvider.currentUser().organizationId();
+        CurrentUser user = currentUserProvider.currentUser();
         return repository
-                .findByIdAndOrganizationId(configId, organizationId)
+                .findByIdAndOrganizationIdAndUserId(configId, user.organizationId(), user.userId())
                 .map(FacebookAppCredential::getApiVersion)
                 .orElse(null);
     }

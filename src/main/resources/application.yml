@@ -75,13 +75,10 @@ app:
     default-user-id: ${DEFAULT_USER_ID:1}
   integration:
     facebook:
+      # Infrastructure only (non-secret). App ID/Secret are stored PER USER in the
+      # database — there is no global/shared Meta app credential.
       graph-base-url: ${FACEBOOK_GRAPH_BASE_URL:https://graph.facebook.com}
       api-version: ${FACEBOOK_GRAPH_API_VERSION:v25.0}
-      # OAuth (Facebook Login). app-secret is server-side only; never expose it.
-      app-id: ${FACEBOOK_APP_ID:1435931321914155}
-      app-secret: ${FACEBOOK_APP_SECRET:05343069cf6b9fe38ecb75b5cf8eb57e}
-      redirect-uri: ${FACEBOOK_REDIRECT_URI:http://localhost:4200/settings/social-integrations}
-      scopes: ${FACEBOOK_SCOPES:pages_show_list,pages_read_engagement,pages_manage_posts,pages_read_user_content}
 
 springdoc:
   api-docs:
