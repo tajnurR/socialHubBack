@@ -60,9 +60,10 @@ app:
     # MUST be overridden with a strong, stable value per environment in prod.
     secret: ${APP_ENCRYPTION_SECRET:change-me-dev-secret-please-rotate}
   tenant:
-    # Dev fallback organization when no X-Organization-Id is present.
-    # TODO[SSO]: the org will come from the authenticated principal instead.
+    # Dev fallback user + organization (seeded by Flyway) used by CurrentUserProvider.
+    # TODO[SSO]: user + org will come from the authenticated principal instead.
     default-organization-id: ${DEFAULT_ORGANIZATION_ID:1}
+    default-user-id: ${DEFAULT_USER_ID:1}
   integration:
     facebook:
       graph-base-url: ${FACEBOOK_GRAPH_BASE_URL:https://graph.facebook.com}

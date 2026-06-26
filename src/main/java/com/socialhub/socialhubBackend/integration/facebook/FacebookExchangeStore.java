@@ -10,13 +10,15 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.springframework.stereotype.Component;
 
 /**
- * Short-lived, in-memory store for resolved Page tokens between the OAuth
- * {@code exchange} step (which returns selectable pages) and the {@code connect}
- * step (which persists the chosen page). Page tokens are held here only — they
- * are never returned to the frontend or logged.
+ * Short-lived, in-memory store bridging the OAuth {@code exchange} step (which
+ * returns selectable pages) and the {@code connect} step (which persists the
+ * chosen page). Holds the resolved Page tokens plus the app config used
+ * (configId + version) so connect can link the connection and call Graph with the
+ * right version. Page tokens are held here only — never returned to the frontend
+ * or logged.
  *
- * <p>TTL-bounded. Note: in-memory, so single-instance only; move to a shared
- * store (e.g. Redis with encryption) if running multiple backend instances.
+ * <p>TTL-bounded. In-memory, so single-instance only; move to a shared encrypted
+ * store (e.g. Redis) if running multiple backend instances.
  */
 @Component
 public class FacebookExchangeStore {
@@ -26,15 +28,18 @@ public class FacebookExchangeStore {
     /** A page the authorizing user manages, with its (sensitive) Page access token. */
     public record PageToken(String pageId, String name, String accessToken) {}
 
-    private record Entry(Instant expiresAt, List<PageToken> pages) {}
+    /** The app config used for an exchange (to link the connection + pick the Graph version). */
+    public record ExchangeMeta(Long configId, String apiVersion) {}
+
+    private record Entry(Instant expiresAt, Long configId, String apiVersion, List<PageToken> pages) {}
 
     private final Map<String, Entry> store = new ConcurrentHashMap<>();
 
-    /** Stores the resolved pages and returns an opaque exchange id. */
-    public String put(List<PageToken> pages) {
+    /** Stores the resolved pages + the app config used; returns an opaque exchange id. */
+    public String put(Long configId, String apiVersion, List<PageToken> pages) {
         evictExpired();
         String exchangeId = UUID.randomUUID().toString();
-        store.put(exchangeId, new Entry(Instant.now().plus(TTL), List.copyOf(pages)));
+        store.put(exchangeId, new Entry(Instant.now().plus(TTL), configId, apiVersion, List.copyOf(pages)));
         return exchangeId;
     }
 
@@ -44,6 +49,13 @@ public class FacebookExchangeStore {
             return Optional.empty();
         }
         return entry.pages().stream().filter(p -> p.pageId().equals(pageId)).findFirst();
+    }
+
+    public Optional<ExchangeMeta> meta(String exchangeId) {
+        Entry entry = current(exchangeId);
+        return entry == null
+                ? Optional.empty()
+                : Optional.of(new ExchangeMeta(entry.configId(), entry.apiVersion()));
     }
 
     private Entry current(String exchangeId) {

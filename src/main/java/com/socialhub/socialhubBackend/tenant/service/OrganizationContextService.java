@@ -1,30 +1,25 @@
 package com.socialhub.socialhubBackend.tenant.service;
 
-import com.socialhub.socialhubBackend.config.AppProperties;
-import com.socialhub.socialhubBackend.tenant.context.TenantContext;
+import com.socialhub.socialhubBackend.user.context.CurrentUserProvider;
 import org.springframework.stereotype.Service;
 
 /**
- * Resolves the organization that owns the current request.
+ * Convenience accessor for the current request's organization id.
  *
- * <p>Reads {@link TenantContext} (populated by {@code TenantContextFilter} from
- * the {@code X-Organization-Id} header for now) and falls back to the configured
- * dev default organization when absent.
- *
- * <p>TODO[SSO]: derive the organization from the authenticated principal's claims
- * and remove the header-based/default fallback.
+ * <p>Delegates to {@link CurrentUserProvider} — the single source of truth for
+ * the current user/org. Kept so existing callers don't all depend on
+ * {@code CurrentUserProvider} directly; for the user id, inject the provider.
  */
 @Service
 public class OrganizationContextService {
 
-    private final AppProperties appProperties;
+    private final CurrentUserProvider currentUserProvider;
 
-    public OrganizationContextService(AppProperties appProperties) {
-        this.appProperties = appProperties;
+    public OrganizationContextService(CurrentUserProvider currentUserProvider) {
+        this.currentUserProvider = currentUserProvider;
     }
 
     public Long currentOrganizationId() {
-        Long fromContext = TenantContext.getOrganizationId();
-        return fromContext != null ? fromContext : appProperties.tenant().defaultOrganizationId();
+        return currentUserProvider.currentUser().organizationId();
     }
 }

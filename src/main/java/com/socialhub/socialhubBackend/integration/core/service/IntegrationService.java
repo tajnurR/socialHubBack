@@ -90,13 +90,21 @@ public class IntegrationService {
         }
         // Validates by calling the platform; throws on bad credentials.
         ProviderAccount account = provider.validateCredentials(request.credentials());
-        return persistConnection(request.platform(), account, "MANUAL", null);
+        return persistConnection(request.platform(), account, "MANUAL", null, null);
     }
 
-    /** Persists a new connection (shared by manual and OAuth flows). */
+    /**
+     * Persists a new connection (shared by manual and OAuth flows).
+     *
+     * @param appCredentialId the app config that created this connection (OAuth), or null (manual)
+     */
     @Transactional
     public IntegrationResponse persistConnection(
-            SocialPlatform platform, ProviderAccount account, String tokenType, Instant expiresAt) {
+            SocialPlatform platform,
+            ProviderAccount account,
+            String tokenType,
+            Instant expiresAt,
+            Long appCredentialId) {
         Long organizationId = organizationContext.currentOrganizationId();
         if (repository.existsByOrganizationIdAndPlatformAndExternalAccountId(
                 organizationId, platform, account.externalAccountId())) {
@@ -114,6 +122,7 @@ public class IntegrationService {
         integration.setTokenType(tokenType);
         integration.setTokenObtainedAt(Instant.now());
         integration.setTokenExpiresAt(expiresAt);
+        integration.setAppCredentialId(appCredentialId);
         return mapper.toResponse(repository.save(integration));
     }
 

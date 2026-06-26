@@ -6,6 +6,7 @@ import com.socialhub.socialhubBackend.integration.core.domain.SocialIntegration;
 import com.socialhub.socialhubBackend.integration.core.dto.IntegrationResponse;
 import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.ProviderAccount;
 import com.socialhub.socialhubBackend.integration.core.service.IntegrationService;
+import com.socialhub.socialhubBackend.integration.facebook.FacebookExchangeStore.ExchangeMeta;
 import com.socialhub.socialhubBackend.integration.facebook.FacebookExchangeStore.PageToken;
 import com.socialhub.socialhubBackend.integration.facebook.credential.FacebookAppCredentialProvider;
 import com.socialhub.socialhubBackend.integration.facebook.credential.FacebookAppCredentials;
@@ -53,8 +54,9 @@ public class FacebookOAuthService {
         FacebookAppCredentials credentials = appCredentialProvider.resolve();
 
         GraphDtos.TokenResponse longLived = graphClient.exchangeForLongLivedUserToken(
-                shortLivedToken, credentials.appId(), credentials.appSecret());
-        GraphDtos.AccountsResponse accounts = graphClient.getManagedPages(longLived.accessToken());
+                shortLivedToken, credentials.appId(), credentials.appSecret(), credentials.apiVersion());
+        GraphDtos.AccountsResponse accounts =
+                graphClient.getManagedPages(longLived.accessToken(), credentials.apiVersion());
 
         List<GraphDtos.Page> data =
                 accounts != null && accounts.data() != null ? accounts.data() : List.of();
@@ -68,7 +70,7 @@ public class FacebookOAuthService {
                             + "access to a Page and the pages_show_list permission.");
         }
 
-        String exchangeId = exchangeStore.put(pages);
+        String exchangeId = exchangeStore.put(credentials.configId(), credentials.apiVersion(), pages);
         List<PageOption> options = pages.stream()
                 .map(p -> new PageOption(p.pageId(), p.name()))
                 .toList();
@@ -80,11 +82,13 @@ public class FacebookOAuthService {
 
     /** Persist the chosen page from a prior exchange (validates the page token first). */
     public IntegrationResponse connect(String exchangeId, String pageId) {
+        ExchangeMeta meta = metaOrThrow(exchangeId);
         PageToken page = resolveOrThrow(exchangeId, pageId);
-        ProviderAccount account = validateAndBuildAccount(page);
+        ProviderAccount account = validateAndBuildAccount(page, meta.apiVersion());
         // Page tokens from a long-lived user token do not expire → expiresAt = null.
+        // Link the connection to the app config it was created through.
         return integrationService.persistConnection(
-                SocialPlatform.FACEBOOK, account, TOKEN_TYPE, null);
+                SocialPlatform.FACEBOOK, account, TOKEN_TYPE, null, meta.configId());
     }
 
     /** Re-authenticate an existing integration in place using a fresh exchange. */
@@ -93,9 +97,16 @@ public class FacebookOAuthService {
         if (integration.getPlatform() != SocialPlatform.FACEBOOK) {
             throw new BusinessException("This integration is not a Facebook integration.");
         }
+        ExchangeMeta meta = metaOrThrow(exchangeId);
         PageToken page = resolveOrThrow(exchangeId, integration.getExternalAccountId());
-        validateAndBuildAccount(page);
+        validateAndBuildAccount(page, meta.apiVersion());
         return integrationService.reauth(integrationId, page.accessToken(), TOKEN_TYPE, null);
+    }
+
+    private ExchangeMeta metaOrThrow(String exchangeId) {
+        return exchangeStore.meta(exchangeId)
+                .orElseThrow(() -> new BusinessException(
+                        "Your Facebook session expired. Please connect with Facebook again."));
     }
 
     private PageToken resolveOrThrow(String exchangeId, String pageId) {
@@ -105,8 +116,8 @@ public class FacebookOAuthService {
                                 + "Please connect with Facebook again."));
     }
 
-    private ProviderAccount validateAndBuildAccount(PageToken page) {
-        GraphDtos.Page validated = graphClient.getPage(page.pageId(), page.accessToken());
+    private ProviderAccount validateAndBuildAccount(PageToken page, String apiVersion) {
+        GraphDtos.Page validated = graphClient.getPage(page.pageId(), page.accessToken(), apiVersion);
         String name = validated.name() != null ? validated.name() : page.name();
         return new ProviderAccount(SocialPlatform.FACEBOOK, page.pageId(), name, page.accessToken());
     }

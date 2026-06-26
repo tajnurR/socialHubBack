@@ -10,7 +10,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param security high-level security toggles ({@code enabled=false} keeps the API
  *                 open during development until SSO is wired)
  * @param crypto   secret used to encrypt data at rest (e.g. integration tokens)
- * @param tenant   tenancy defaults (dev fallback organization until SSO provides it)
+ * @param tenant   tenancy defaults (dev fallback user/organization until SSO provides them)
  */
 @ConfigurationProperties(prefix = "app")
 public record AppProperties(Cors cors, Security security, Crypto crypto, Tenant tenant) {
@@ -25,5 +25,5 @@ public record AppProperties(Cors cors, Security security, Crypto crypto, Tenant 
 
     public record Crypto(String secret) {}
 
-    public record Tenant(Long defaultOrganizationId) {}
+    public record Tenant(Long defaultOrganizationId, Long defaultUserId) {}
 }

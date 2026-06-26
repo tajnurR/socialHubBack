@@ -58,7 +58,7 @@ public class FacebookProvider extends AbstractSocialMediaProvider {
         String pageId = required(credentials, CREDENTIAL_PAGE_ID);
         String accessToken = required(credentials, CREDENTIAL_ACCESS_TOKEN);
 
-        GraphDtos.Page page = graphClient.getPage(pageId, accessToken);
+        GraphDtos.Page page = graphClient.getPage(pageId, accessToken, null);
         String resolvedId = page.id() != null ? page.id() : pageId;
 
         // Persist a Page-scoped token so page-only edges (published_posts, /feed) don't
@@ -82,7 +82,7 @@ public class FacebookProvider extends AbstractSocialMediaProvider {
      */
     private String derivePageTokenFromAccounts(String pageId, String userToken) {
         try {
-            GraphDtos.AccountsResponse accounts = graphClient.getManagedPages(userToken);
+            GraphDtos.AccountsResponse accounts = graphClient.getManagedPages(userToken, null);
             if (accounts != null && accounts.data() != null) {
                 return accounts.data().stream()
                         .filter(p -> pageId.equals(p.id()))
@@ -108,7 +108,7 @@ public class FacebookProvider extends AbstractSocialMediaProvider {
             String externalAccountId, String accessToken, String cursor, int limit) {
         int effectiveLimit = Math.min(limit <= 0 ? DEFAULT_LIMIT : limit, MAX_LIMIT);
         GraphDtos.PostsResponse response = graphClient.getPublishedPosts(
-                externalAccountId, accessToken, cursor, effectiveLimit, null, null);
+                externalAccountId, accessToken, cursor, effectiveLimit, null, null, null);
 
         List<GraphDtos.Post> data = response.data() != null ? response.data() : List.of();
         List<ProviderPost> posts = data.stream().map(this::toProviderPost).toList();
@@ -140,7 +140,7 @@ public class FacebookProvider extends AbstractSocialMediaProvider {
             throw new BusinessException("Post message is required");
         }
         GraphDtos.CreateResponse response = graphClient.createFeedPost(
-                externalAccountId, accessToken, command.message(), command.link());
+                externalAccountId, accessToken, command.message(), command.link(), null);
         return new ProviderPostRef(response.id());
     }
 

@@ -10,6 +10,7 @@ import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.Provider
 import com.socialhub.socialhubBackend.integration.core.exception.ProviderAuthException;
 import com.socialhub.socialhubBackend.integration.core.service.IntegrationService;
 import com.socialhub.socialhubBackend.integration.core.service.IntegrationStatusUpdater;
+import com.socialhub.socialhubBackend.integration.facebook.credential.FacebookAppCredentialProvider;
 import com.socialhub.socialhubBackend.integration.facebook.dto.FacebookAnalyticsDtos.AnalyticsDashboard;
 import com.socialhub.socialhubBackend.integration.facebook.dto.FacebookAnalyticsDtos.BestPost;
 import com.socialhub.socialhubBackend.integration.facebook.dto.FacebookAnalyticsDtos.ConnectedPage;
@@ -71,6 +72,7 @@ public class FacebookAnalyticsService {
     private final FacebookGraphClient graphClient;
     private final EncryptionService encryptionService;
     private final IntegrationStatusUpdater statusUpdater;
+    private final FacebookAppCredentialProvider appCredentialProvider;
 
     private final Map<String, CacheEntry> postsCache = new ConcurrentHashMap<>();
 
@@ -79,12 +81,14 @@ public class FacebookAnalyticsService {
             FacebookProvider facebookProvider,
             FacebookGraphClient graphClient,
             EncryptionService encryptionService,
-            IntegrationStatusUpdater statusUpdater) {
+            IntegrationStatusUpdater statusUpdater,
+            FacebookAppCredentialProvider appCredentialProvider) {
         this.integrationService = integrationService;
         this.facebookProvider = facebookProvider;
         this.graphClient = graphClient;
         this.encryptionService = encryptionService;
         this.statusUpdater = statusUpdater;
+        this.appCredentialProvider = appCredentialProvider;
     }
 
     /** Connected Facebook Pages for the current organization. */
@@ -110,8 +114,10 @@ public class FacebookAnalyticsService {
         }
         String token = encryptionService.decrypt(integration.getAccessToken());
         String pageId = integration.getExternalAccountId();
+        // Per-config Graph version override (null → global default).
+        String apiVersion = appCredentialProvider.apiVersionForConfig(integration.getAppCredentialId());
 
-        FetchResult fetched = fetchPostsCached(integrationId, pageId, token, from, to);
+        FetchResult fetched = fetchPostsCached(integrationId, pageId, token, from, to, apiVersion);
         List<ProviderPost> filtered = applyFilters(fetched.posts(), minLikes, minComments);
 
         List<PostRow> rows = filtered.stream()
@@ -119,11 +125,11 @@ public class FacebookAnalyticsService {
                 .map(this::toPostRow)
                 .toList();
 
-        PageInfo pageInfo = loadPageInfo(integration, token);
+        PageInfo pageInfo = loadPageInfo(integration, token, apiVersion);
         KpiSummary summary = summarize(filtered);
         List<TimeSeriesPoint> series = buildSeries(filtered, granularity);
-        PeriodComparison comparison =
-                buildComparison(integrationId, pageId, token, from, to, minLikes, minComments, summary);
+        PeriodComparison comparison = buildComparison(
+                integrationId, pageId, token, from, to, minLikes, minComments, summary, apiVersion);
 
         return new AnalyticsDashboard(pageInfo, summary, comparison, series, rows, fetched.capped());
     }
@@ -131,26 +137,26 @@ public class FacebookAnalyticsService {
     // --- fetching (cached) ---------------------------------------------------
 
     private FetchResult fetchPostsCached(
-            Long integrationId, String pageId, String token, String from, String to) {
+            Long integrationId, String pageId, String token, String from, String to, String apiVersion) {
         String key = integrationId + "|" + nullToEmpty(from) + "|" + nullToEmpty(to);
         CacheEntry entry = postsCache.get(key);
         if (entry != null && Instant.now().isBefore(entry.expiresAt())) {
             return entry.result();
         }
-        FetchResult result = fetchPosts(integrationId, pageId, token, from, to);
+        FetchResult result = fetchPosts(integrationId, pageId, token, from, to, apiVersion);
         postsCache.put(key, new CacheEntry(Instant.now().plusMillis(CACHE_TTL_MS), result));
         return result;
     }
 
     private FetchResult fetchPosts(
-            Long integrationId, String pageId, String token, String from, String to) {
+            Long integrationId, String pageId, String token, String from, String to, String apiVersion) {
         List<ProviderPost> posts = new ArrayList<>();
         boolean capped = false;
         String cursor = null;
         try {
             while (posts.size() < MAX_POSTS) {
                 GraphDtos.PostsResponse response =
-                        graphClient.getPublishedPosts(pageId, token, cursor, PER_PAGE, from, to);
+                        graphClient.getPublishedPosts(pageId, token, cursor, PER_PAGE, from, to, apiVersion);
                 List<GraphDtos.Post> data = response.data() != null ? response.data() : List.of();
                 data.forEach(p -> posts.add(facebookProvider.toProviderPost(p)));
                 cursor = response.paging() != null && response.paging().cursors() != null
@@ -244,7 +250,8 @@ public class FacebookAnalyticsService {
             String to,
             Long minLikes,
             Long minComments,
-            KpiSummary current) {
+            KpiSummary current,
+            String apiVersion) {
         LocalDate fromDate = parseDate(from);
         LocalDate toDate = parseDate(to);
         if (fromDate == null || toDate == null || !toDate.isAfter(fromDate)) {
@@ -254,8 +261,8 @@ public class FacebookAnalyticsService {
         LocalDate prevTo = fromDate.minusDays(1);
         LocalDate prevFrom = prevTo.minusDays(lengthDays);
 
-        FetchResult prev =
-                fetchPostsCached(integrationId, pageId, token, prevFrom.toString(), prevTo.toString());
+        FetchResult prev = fetchPostsCached(
+                integrationId, pageId, token, prevFrom.toString(), prevTo.toString(), apiVersion);
         Totals p = totals(applyFilters(prev.posts(), minLikes, minComments));
 
         return new PeriodComparison(
@@ -290,11 +297,11 @@ public class FacebookAnalyticsService {
 
     // --- page info (best-effort) ---------------------------------------------
 
-    private PageInfo loadPageInfo(SocialIntegration integration, String token) {
+    private PageInfo loadPageInfo(SocialIntegration integration, String token, String apiVersion) {
         boolean tokenHealthy = integration.getStatus() == IntegrationStatus.CONNECTED;
         try {
             GraphDtos.PageProfile profile =
-                    graphClient.getPageInfo(integration.getExternalAccountId(), token);
+                    graphClient.getPageInfo(integration.getExternalAccountId(), token, apiVersion);
             return new PageInfo(
                     integration.getExternalAccountId(),
                     profile.name() != null ? profile.name() : integration.getDisplayName(),

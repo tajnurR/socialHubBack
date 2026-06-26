@@ -53,4 +53,8 @@ public class SocialIntegration extends TenantBaseEntity {
     /** When the token expires; {@code null} for non-expiring Page tokens. */
     @Column(name = "token_expires_at")
     private Instant tokenExpiresAt;
+
+    /** The app config (FacebookAppCredential) this connection was created through; null for manual. */
+    @Column(name = "app_credential_id")
+    private Long appCredentialId;
 }

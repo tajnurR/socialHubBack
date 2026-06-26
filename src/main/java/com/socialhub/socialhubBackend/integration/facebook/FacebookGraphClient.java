@@ -9,6 +9,7 @@ import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.PagePro
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.PostsResponse;
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.TokenResponse;
 import java.time.Duration;
+import java.util.Map;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -58,8 +59,10 @@ public class FacebookGraphClient {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout((int) CONNECT_TIMEOUT.toMillis());
         requestFactory.setReadTimeout((int) READ_TIMEOUT.toMillis());
+        // Base URL is the Graph host only; the version is part of each path (per-call,
+        // so a per-config override can be applied — see resolveVersion).
         this.client = RestClient.builder()
-                .baseUrl(properties.baseUrl())
+                .baseUrl(properties.graphBaseUrl())
                 .requestFactory(requestFactory)
                 .build();
     }
@@ -68,10 +71,11 @@ public class FacebookGraphClient {
      * GET /oauth/access_token?grant_type=client_credentials — validates an app's
      * id/secret by fetching an app access token. Throws if the credentials are invalid.
      */
-    public void validateAppCredentials(String appId, String appSecret) {
+    public void validateAppCredentials(String appId, String appSecret, String apiVersion) {
+        String path = FacebookGraphApi.OAUTH_ACCESS_TOKEN.path(resolveVersion(apiVersion));
         call(
                 () -> client.get()
-                        .uri(uri -> uri.path("/oauth/access_token")
+                        .uri(uri -> uri.path(path)
                                 .queryParam("grant_type", "client_credentials")
                                 .queryParam("client_id", appId)
                                 .queryParam("client_secret", appSecret)
@@ -83,13 +87,14 @@ public class FacebookGraphClient {
 
     /**
      * GET /oauth/access_token?grant_type=fb_exchange_token — exchanges a short-lived
-     * user token for a long-lived one, using the supplied (per-org) app id/secret.
+     * user token for a long-lived one, using the supplied (per-config) app id/secret.
      */
     public TokenResponse exchangeForLongLivedUserToken(
-            String shortLivedUserToken, String appId, String appSecret) {
+            String shortLivedUserToken, String appId, String appSecret, String apiVersion) {
+        String path = FacebookGraphApi.OAUTH_ACCESS_TOKEN.path(resolveVersion(apiVersion));
         return call(
                 () -> client.get()
-                        .uri(uri -> uri.path("/oauth/access_token")
+                        .uri(uri -> uri.path(path)
                                 .queryParam("grant_type", "fb_exchange_token")
                                 .queryParam("client_id", appId)
                                 .queryParam("client_secret", appSecret)
@@ -104,11 +109,14 @@ public class FacebookGraphClient {
      * GET /{page-id}?fields=name,access_token — validates the token and resolves the
      * Page-scoped access token (Graph returns it when the caller manages the Page).
      */
-    public Page getPage(String pageId, String accessToken) {
+    public Page getPage(String pageId, String accessToken, String apiVersion) {
         log.debug("Validating Facebook page id={} with token={}", pageId, mask(accessToken));
+        String path = FacebookGraphApi.PAGE.path(resolveVersion(apiVersion), Map.of("pageId", pageId));
         return call(
                 () -> client.get()
-                        .uri(uri -> uri.path("/{id}").queryParam("fields", "name,access_token").build(pageId))
+                        .uri(uri -> uri.path(path)
+                                .queryParam("fields", FacebookGraphApi.Fields.PAGE_VALIDATE)
+                                .build())
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
                         .retrieve()
                         .body(Page.class),
@@ -116,11 +124,12 @@ public class FacebookGraphClient {
     }
 
     /** GET /me/accounts — pages the (user) token manages, each with its Page access token. */
-    public AccountsResponse getManagedPages(String accessToken) {
+    public AccountsResponse getManagedPages(String accessToken, String apiVersion) {
+        String path = FacebookGraphApi.ME_ACCOUNTS.path(resolveVersion(apiVersion));
         return call(
                 () -> client.get()
-                        .uri(uri -> uri.path("/me/accounts")
-                                .queryParam("fields", "id,name,access_token")
+                        .uri(uri -> uri.path(path)
+                                .queryParam("fields", FacebookGraphApi.Fields.MANAGED_PAGES)
                                 .queryParam("limit", 200)
                                 .build())
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
@@ -129,21 +138,17 @@ public class FacebookGraphClient {
                 "list managed Facebook pages");
     }
 
-    /** Fields requested for posts, including engagement summaries. */
-    private static final String POST_FIELDS =
-            "id,message,created_time,full_picture,permalink_url,shares,"
-                    + "likes.summary(true),comments.summary(true),reactions.summary(true)";
-
     /**
      * GET /{page-id}?fields=name,fan_count,picture,category — page profile for the
      * dashboard header. Best-effort: callers should tolerate failure.
      */
-    public PageProfile getPageInfo(String pageId, String accessToken) {
+    public PageProfile getPageInfo(String pageId, String accessToken, String apiVersion) {
+        String path = FacebookGraphApi.PAGE.path(resolveVersion(apiVersion), Map.of("pageId", pageId));
         return call(
                 () -> client.get()
-                        .uri(uri -> uri.path("/{id}")
-                                .queryParam("fields", "name,fan_count,picture.type(large),category")
-                                .build(pageId))
+                        .uri(uri -> uri.path(path)
+                                .queryParam("fields", FacebookGraphApi.Fields.PAGE_PROFILE)
+                                .build())
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
                         .retrieve()
                         .body(PageProfile.class),
@@ -155,12 +160,15 @@ public class FacebookGraphClient {
      * (cursor pagination; optional {@code since}/{@code until} date range).
      */
     public PostsResponse getPublishedPosts(
-            String pageId, String accessToken, String after, int limit, String since, String until) {
+            String pageId, String accessToken, String after, int limit,
+            String since, String until, String apiVersion) {
+        String path = FacebookGraphApi.PAGE_PUBLISHED_POSTS.path(
+                resolveVersion(apiVersion), Map.of("pageId", pageId));
         return call(
                 () -> client.get()
                         .uri(uri -> {
-                            uri.path("/{id}/published_posts")
-                                    .queryParam("fields", POST_FIELDS)
+                            uri.path(path)
+                                    .queryParam("fields", FacebookGraphApi.Fields.POST)
                                     .queryParam("limit", limit);
                             if (after != null && !after.isBlank()) {
                                 uri.queryParam("after", after);
@@ -171,7 +179,7 @@ public class FacebookGraphClient {
                             if (until != null && !until.isBlank()) {
                                 uri.queryParam("until", until);
                             }
-                            return uri.build(pageId);
+                            return uri.build();
                         })
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
                         .retrieve()
@@ -180,7 +188,9 @@ public class FacebookGraphClient {
     }
 
     /** POST /{page-id}/feed — publish a post. */
-    public CreateResponse createFeedPost(String pageId, String accessToken, String message, String link) {
+    public CreateResponse createFeedPost(
+            String pageId, String accessToken, String message, String link, String apiVersion) {
+        String path = FacebookGraphApi.PAGE_FEED.path(resolveVersion(apiVersion), Map.of("pageId", pageId));
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("message", message);
         if (link != null && !link.isBlank()) {
@@ -188,13 +198,18 @@ public class FacebookGraphClient {
         }
         return call(
                 () -> client.post()
-                        .uri(uri -> uri.path("/{id}/feed").build(pageId))
+                        .uri(uri -> uri.path(path).build())
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
                         .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                         .body(form)
                         .retrieve()
                         .body(CreateResponse.class),
                 "create Facebook post");
+    }
+
+    /** Per-config override if provided, else the global default version. */
+    private String resolveVersion(String apiVersion) {
+        return apiVersion != null && !apiVersion.isBlank() ? apiVersion : properties.apiVersion();
     }
 
     private String bearer(String accessToken) {
