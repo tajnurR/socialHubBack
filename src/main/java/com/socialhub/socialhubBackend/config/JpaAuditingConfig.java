@@ -5,6 +5,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.domain.AuditorAware;
 import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 
 /**
  * Enables JPA auditing so {@code @CreatedDate}/{@code @LastModifiedDate}/
@@ -15,15 +18,20 @@ import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
 public class JpaAuditingConfig {
 
     /**
-     * Resolves the "current user" for {@code @CreatedBy}.
-     *
-     * <p>TODO[SSO]: return the authenticated principal from the SecurityContext
-     * once SSO is wired, e.g.
-     * {@code SecurityContextHolder.getContext().getAuthentication().getName()}.
-     * Until then everything is attributed to {@code system}.
+     * Resolves {@code @CreatedBy} from the authenticated JWT (the user's email),
+     * falling back to {@code system} for unauthenticated/startup operations
+     * (e.g. the admin seeder). Reads the security context directly so it never
+     * fails when there is no current user.
      */
     @Bean
     public AuditorAware<String> auditorAware() {
-        return () -> Optional.of("system");
+        return () -> {
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            if (authentication instanceof JwtAuthenticationToken jwtAuth) {
+                String email = jwtAuth.getToken().getClaimAsString("email");
+                return Optional.of(email != null ? email : jwtAuth.getName());
+            }
+            return Optional.of("system");
+        };
     }
 }

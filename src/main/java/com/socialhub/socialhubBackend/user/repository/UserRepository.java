@@ -13,6 +13,11 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     Optional<User> findByOrganizationIdAndEmail(Long organizationId, String email);
 
+    /** Login lookup: email is globally unique (see V6). */
+    Optional<User> findByEmail(String email);
+
+    boolean existsByEmail(String email);
+
     /** TODO[SSO]: lookup by OIDC subject once SSO is wired. */
     Optional<User> findByExternalSubject(String externalSubject);
 }

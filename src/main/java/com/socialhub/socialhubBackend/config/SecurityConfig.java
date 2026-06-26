@@ -6,33 +6,36 @@ import org.springframework.security.config.annotation.method.configuration.Enabl
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 /**
- * Security scaffolding.
+ * Stateless JWT security.
  *
- * <p><b>Current state:</b> the API is stateless and permits all requests so
- * feature development isn't blocked. Authentication is intentionally NOT
- * implemented yet.
+ * <p>Public: auth (login/register/refresh), actuator health/info, API docs.
+ * Everything else requires a valid Bearer access token (validated by the
+ * resource server). Roles come from the token's {@code roles} claim
+ * (→ {@code ROLE_*}).
  *
- * <p><b>TODO[SSO]:</b> when an OAuth2/OIDC provider is chosen, plug it in here:
- * <ul>
- *   <li>add {@code spring-boot-starter-oauth2-resource-server}</li>
- *   <li>configure {@code http.oauth2ResourceServer(o -> o.jwt(...))} with the issuer URI</li>
- *   <li>replace {@code .anyRequest().permitAll()} with real authorization rules
- *       (gate {@code /api/**}, keep {@code /actuator/health} and docs open)</li>
- *   <li>add a JWT-to-authorities + tenant converter that populates the tenant context</li>
- * </ul>
+ * <p><b>Swap to SSO/OIDC:</b> change only the token issuer ({@code TokenService})
+ * and the {@code JwtDecoder} (point it at the IdP's issuer-uri/JWKs). This chain,
+ * {@code SecurityContextCurrentUserProvider}, and all feature code stay the same.
  */
 @Configuration
 @EnableMethodSecurity
 public class SecurityConfig {
 
-    /** Endpoints that must stay public regardless of future auth rules. */
+    /** Endpoints that stay public (no token required). */
     private static final String[] PUBLIC_ENDPOINTS = {
+        "/api/v1/auth/login",
+        "/api/v1/auth/register",
+        "/api/v1/auth/refresh",
         "/actuator/health/**",
         "/actuator/info",
         "/v3/api-docs/**",
@@ -55,12 +58,25 @@ public class SecurityConfig {
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
-                        // TODO[SSO]: tighten to `.requestMatchers("/api/**").authenticated()`
-                        // once the resource server is configured. Permit-all for now.
-                        .anyRequest().permitAll());
-
-        // TODO[SSO]: http.oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()));
+                        .anyRequest().authenticated())
+                .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt ->
+                        jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())));
         return http.build();
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    /** Maps the JWT {@code roles} claim to {@code ROLE_*} authorities. */
+    private JwtAuthenticationConverter jwtAuthenticationConverter() {
+        JwtGrantedAuthoritiesConverter authorities = new JwtGrantedAuthoritiesConverter();
+        authorities.setAuthoritiesClaimName("roles");
+        authorities.setAuthorityPrefix("ROLE_");
+        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
+        converter.setJwtGrantedAuthoritiesConverter(authorities);
+        return converter;
     }
 
     @Bean

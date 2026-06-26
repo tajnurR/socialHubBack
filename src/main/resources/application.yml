@@ -59,6 +59,15 @@ app:
     # Secret used to encrypt integration access tokens at rest (AES-GCM).
     # MUST be overridden with a strong, stable value per environment in prod.
     secret: ${APP_ENCRYPTION_SECRET:change-me-dev-secret-please-rotate}
+  auth:
+    # JWT signing secret (HMAC). MUST be a strong, stable value in prod.
+    jwt-secret: ${AUTH_JWT_SECRET:change-me-dev-jwt-secret-please-rotate}
+    access-token-ttl: ${AUTH_ACCESS_TOKEN_TTL:PT30M}
+    refresh-token-ttl: ${AUTH_REFRESH_TOKEN_TTL:P14D}
+    # Seed an initial admin on startup (disable once created / in prod).
+    seed-admin-enabled: ${AUTH_SEED_ADMIN_ENABLED:true}
+    seed-admin-email: ${AUTH_SEED_ADMIN_EMAIL:admin@socialhub.local}
+    seed-admin-password: ${AUTH_SEED_ADMIN_PASSWORD:admin12345}
   tenant:
     # Dev fallback user + organization (seeded by Flyway) used by CurrentUserProvider.
     # TODO[SSO]: user + org will come from the authenticated principal instead.

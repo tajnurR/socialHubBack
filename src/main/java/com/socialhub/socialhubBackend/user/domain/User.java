@@ -28,6 +28,10 @@ public class User extends TenantBaseEntity {
     @Column(name = "display_name", length = 150)
     private String displayName;
 
+    /** BCrypt password hash; null for SSO-provisioned users (no local password). */
+    @Column(name = "password_hash", length = 100)
+    private String passwordHash;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
     private UserRole role = UserRole.MEMBER;

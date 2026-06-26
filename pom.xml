@@ -37,10 +37,14 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-validation</artifactId>
 		</dependency>
-		<!-- Security scaffolding (permit-all for now; SSO/OAuth2 plugs in later) -->
+		<!-- Security: stateless JWT auth (resource-server validates, jose encodes/decodes) -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-security</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
 		</dependency>
 		<!-- Operational endpoints: health, info, metrics -->
 		<dependency>
