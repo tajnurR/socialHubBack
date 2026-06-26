@@ -24,6 +24,10 @@ public interface SocialIntegrationRepository extends JpaRepository<SocialIntegra
     boolean existsByOrganizationIdAndUserIdAndPlatformAndExternalAccountId(
             Long organizationId, Long userId, SocialPlatform platform, String externalAccountId);
 
+    /** Exact identity lookup for an owned platform account/page. */
+    Optional<SocialIntegration> findByOrganizationIdAndUserIdAndPlatformAndExternalAccountId(
+            Long organizationId, Long userId, SocialPlatform platform, String externalAccountId);
+
     /** Org-wide lookup (no user scope) — only for internal sync jobs, never request-scoped. */
     List<SocialIntegration> findByOrganizationId(Long organizationId);
 }

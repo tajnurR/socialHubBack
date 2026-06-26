@@ -18,4 +18,5 @@ public record IntegrationResponse(
         String tokenType,
         Instant tokenObtainedAt,
         Instant tokenExpiresAt,
+        Long appCredentialId,
         Instant createdAt) {}

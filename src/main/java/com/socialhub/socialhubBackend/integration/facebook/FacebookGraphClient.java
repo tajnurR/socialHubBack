@@ -9,7 +9,11 @@ import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.PagePro
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.PostsResponse;
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.TokenResponse;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -123,15 +127,44 @@ public class FacebookGraphClient {
                 "validate Facebook page");
     }
 
-    /** GET /me/accounts — pages the (user) token manages, each with its Page access token. */
+    /** GET /me/accounts — all pages the (user) token manages, each with its Page access token. */
     public AccountsResponse getManagedPages(String accessToken, String apiVersion) {
+        List<Page> pages = new ArrayList<>();
+        Set<String> seenCursors = new HashSet<>();
+        String after = null;
+        boolean hasNext;
+        AccountsResponse response;
+        do {
+            response = getManagedPagesPage(accessToken, apiVersion, after);
+            if (response != null && response.data() != null) {
+                pages.addAll(response.data());
+            }
+            hasNext = response != null
+                    && response.paging() != null
+                    && response.paging().next() != null
+                    && !response.paging().next().isBlank();
+            after = response != null
+                    && response.paging() != null
+                    && response.paging().cursors() != null
+                    ? response.paging().cursors().after()
+                    : null;
+        } while (hasNext && after != null && !after.isBlank() && seenCursors.add(after));
+        return new AccountsResponse(pages, null);
+    }
+
+    private AccountsResponse getManagedPagesPage(String accessToken, String apiVersion, String after) {
         String path = FacebookGraphApi.ME_ACCOUNTS.path(resolveVersion(apiVersion));
         return call(
                 () -> client.get()
-                        .uri(uri -> uri.path(path)
-                                .queryParam("fields", FacebookGraphApi.Fields.MANAGED_PAGES)
-                                .queryParam("limit", 200)
-                                .build())
+                        .uri(uri -> {
+                            uri.path(path)
+                                    .queryParam("fields", FacebookGraphApi.Fields.MANAGED_PAGES)
+                                    .queryParam("limit", 200);
+                            if (after != null && !after.isBlank()) {
+                                uri.queryParam("after", after);
+                            }
+                            return uri.build();
+                        })
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
                         .retrieve()
                         .body(AccountsResponse.class),

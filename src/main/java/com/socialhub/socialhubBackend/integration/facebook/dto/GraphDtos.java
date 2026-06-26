@@ -33,7 +33,7 @@ public final class GraphDtos {
 
     /** Response of GET /me/accounts — pages the (user) token manages, each with a Page token. */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record AccountsResponse(List<Page> data) {}
+    public record AccountsResponse(List<Page> data, Paging paging) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record PostsResponse(List<Post> data, Paging paging) {}

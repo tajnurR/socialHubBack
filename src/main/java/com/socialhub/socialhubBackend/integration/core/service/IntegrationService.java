@@ -107,15 +107,17 @@ public class IntegrationService {
             Instant expiresAt,
             Long appCredentialId) {
         CurrentUser user = currentUserProvider.currentUser();
-        if (repository.existsByOrganizationIdAndUserIdAndPlatformAndExternalAccountId(
-                user.organizationId(), user.userId(), platform, account.externalAccountId())) {
-            throw new BusinessException(
-                    "This account is already connected. Use reconnect to refresh its token.",
-                    HttpStatus.CONFLICT);
-        }
-        SocialIntegration integration = new SocialIntegration();
-        integration.setOrganizationId(user.organizationId());
-        integration.setUserId(user.userId());
+        SocialIntegration integration = repository
+                .findByOrganizationIdAndUserIdAndPlatformAndExternalAccountId(
+                        user.organizationId(), user.userId(), platform, account.externalAccountId())
+                .orElseGet(() -> {
+                    SocialIntegration created = new SocialIntegration();
+                    created.setOrganizationId(user.organizationId());
+                    created.setUserId(user.userId());
+                    created.setPlatform(platform);
+                    created.setExternalAccountId(account.externalAccountId());
+                    return created;
+                });
         integration.setPlatform(platform);
         integration.setExternalAccountId(account.externalAccountId());
         integration.setDisplayName(account.displayName());

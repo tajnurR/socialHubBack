@@ -11,7 +11,7 @@ public interface FacebookAppCredentialRepository extends JpaRepository<FacebookA
     /** All app configs owned by a user within an organization. */
     List<FacebookAppCredential> findByOrganizationIdAndUserId(Long organizationId, Long userId);
 
-    /** The user's primary/default app config (lowest id) — used by the single-config UI. */
+    /** The user's primary/default app config (lowest id) — used by legacy status/save calls. */
     Optional<FacebookAppCredential> findFirstByOrganizationIdAndUserIdOrderByIdAsc(
             Long organizationId, Long userId);
 

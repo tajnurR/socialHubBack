@@ -16,6 +16,7 @@ import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos;
 import com.socialhub.socialhubBackend.user.context.CurrentUserProvider;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import org.springframework.stereotype.Service;
 
 /**
@@ -53,9 +54,10 @@ public class FacebookOAuthService {
     }
 
     /** Exchange the short-lived user token and return the pages the user can connect. */
-    public ExchangeResponse exchange(String shortLivedToken) {
-        // Resolve the org's own Meta app credentials (throws if not configured yet).
-        FacebookAppCredentials credentials = appCredentialProvider.resolve();
+    public ExchangeResponse exchange(String shortLivedToken, Long configId) {
+        // Resolve the user's own Meta app credentials (throws if not configured yet).
+        FacebookAppCredentials credentials =
+                configId == null ? appCredentialProvider.resolve() : appCredentialProvider.resolveById(configId);
 
         GraphDtos.TokenResponse longLived = graphClient.exchangeForLongLivedUserToken(
                 shortLivedToken, credentials.appId(), credentials.appSecret(), credentials.apiVersion());
@@ -90,13 +92,31 @@ public class FacebookOAuthService {
 
     /** Persist the chosen page from a prior exchange (validates the page token first). */
     public IntegrationResponse connect(String exchangeId, String pageId) {
+        return connectMany(exchangeId, List.of(pageId)).getFirst();
+    }
+
+    /** Persist selected pages from a prior exchange. Existing owned pages are refreshed in place. */
+    public List<IntegrationResponse> connectMany(String exchangeId, List<String> pageIds) {
         ExchangeMeta meta = metaOrThrow(exchangeId);
-        PageToken page = resolveOrThrow(exchangeId, pageId);
-        ProviderAccount account = validateAndBuildAccount(page, meta.apiVersion());
-        // Page tokens from a long-lived user token do not expire → expiresAt = null.
-        // Link the connection to the app config it was created through.
-        return integrationService.persistConnection(
-                SocialPlatform.FACEBOOK, account, TOKEN_TYPE, null, meta.configId());
+        List<String> uniquePageIds = pageIds.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(id -> !id.isBlank())
+                .distinct()
+                .toList();
+        if (uniquePageIds.isEmpty()) {
+            throw new BusinessException("Select at least one Facebook Page to connect.");
+        }
+        return uniquePageIds.stream()
+                .map(pageId -> {
+                    PageToken page = resolveOrThrow(exchangeId, pageId);
+                    ProviderAccount account = validateAndBuildAccount(page, meta.apiVersion());
+                    // Page tokens from a long-lived user token do not expire → expiresAt = null.
+                    // Link the connection to the app config it was created through.
+                    return integrationService.persistConnection(
+                            SocialPlatform.FACEBOOK, account, TOKEN_TYPE, null, meta.configId());
+                })
+                .toList();
     }
 
     /** Re-authenticate an existing integration in place using a fresh exchange. */

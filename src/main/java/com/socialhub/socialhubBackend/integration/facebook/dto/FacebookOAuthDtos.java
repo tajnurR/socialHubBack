@@ -1,6 +1,7 @@
 package com.socialhub.socialhubBackend.integration.facebook.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import java.time.Instant;
 import java.util.List;
 
@@ -10,7 +11,7 @@ public final class FacebookOAuthDtos {
     private FacebookOAuthDtos() {}
 
     /** Short-lived user token from the FB JS SDK login, sent to the backend to exchange. */
-    public record ExchangeRequest(@NotBlank String shortLivedToken) {}
+    public record ExchangeRequest(@NotBlank String shortLivedToken, Long configId) {}
 
     /** A page the user can choose to connect (no token exposed). */
     public record PageOption(String id, String name) {}
@@ -21,6 +22,9 @@ public final class FacebookOAuthDtos {
 
     /** Connect a chosen page from a prior exchange. */
     public record ConnectRequest(@NotBlank String exchangeId, @NotBlank String pageId) {}
+
+    /** Connect one or more chosen pages from a prior exchange. */
+    public record ConnectPagesRequest(@NotBlank String exchangeId, @NotEmpty List<@NotBlank String> pageIds) {}
 
     /** Re-authenticate an existing integration using a fresh exchange. */
     public record ReauthRequest(@NotBlank String exchangeId) {}

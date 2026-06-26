@@ -3,6 +3,7 @@ package com.socialhub.socialhubBackend.integration.facebook.web;
 import com.socialhub.socialhubBackend.common.response.ApiResponse;
 import com.socialhub.socialhubBackend.integration.core.dto.IntegrationResponse;
 import com.socialhub.socialhubBackend.integration.facebook.FacebookOAuthService;
+import com.socialhub.socialhubBackend.integration.facebook.dto.FacebookOAuthDtos.ConnectPagesRequest;
 import com.socialhub.socialhubBackend.integration.facebook.dto.FacebookOAuthDtos.ConnectRequest;
 import com.socialhub.socialhubBackend.integration.facebook.dto.FacebookOAuthDtos.ExchangeRequest;
 import com.socialhub.socialhubBackend.integration.facebook.dto.FacebookOAuthDtos.ExchangeResponse;
@@ -10,6 +11,7 @@ import com.socialhub.socialhubBackend.integration.facebook.dto.FacebookOAuthDtos
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import java.util.List;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -35,7 +37,7 @@ public class FacebookOAuthController {
     @PostMapping("/facebook/oauth/exchange")
     @Operation(summary = "Exchange a short-lived FB user token and return selectable pages")
     public ApiResponse<ExchangeResponse> exchange(@Valid @RequestBody ExchangeRequest request) {
-        return ApiResponse.ok(oauthService.exchange(request.shortLivedToken()));
+        return ApiResponse.ok(oauthService.exchange(request.shortLivedToken(), request.configId()));
     }
 
     @PostMapping("/facebook/connect")
@@ -43,6 +45,15 @@ public class FacebookOAuthController {
     public ApiResponse<IntegrationResponse> connect(@Valid @RequestBody ConnectRequest request) {
         return ApiResponse.ok(
                 oauthService.connect(request.exchangeId(), request.pageId()), "Integration connected");
+    }
+
+    @PostMapping("/facebook/connect/pages")
+    @Operation(summary = "Connect selected Facebook Pages from a prior exchange")
+    public ApiResponse<List<IntegrationResponse>> connectPages(
+            @Valid @RequestBody ConnectPagesRequest request) {
+        return ApiResponse.ok(
+                oauthService.connectMany(request.exchangeId(), request.pageIds()),
+                "Integrations connected");
     }
 
     @PostMapping("/{id}/reauth")
