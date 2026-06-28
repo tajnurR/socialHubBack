@@ -6,13 +6,11 @@ import com.socialhub.socialhubBackend.integration.core.SocialPlatform;
 import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.CreatePostCommand;
 import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.ProviderAccount;
 import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.ProviderPost;
-import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.ProviderPostPage;
 import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.ProviderPostRef;
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,9 +29,6 @@ public class FacebookProvider extends AbstractSocialMediaProvider {
 
     private static final DateTimeFormatter GRAPH_TIME =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssZ");
-    private static final int DEFAULT_LIMIT = 25;
-    private static final int MAX_LIMIT = 50;
-
     public static final String CREDENTIAL_PAGE_ID = "pageId";
     public static final String CREDENTIAL_ACCESS_TOKEN = "accessToken";
 
@@ -101,22 +96,6 @@ public class FacebookProvider extends AbstractSocialMediaProvider {
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
-    }
-
-    @Override
-    public ProviderPostPage getPosts(
-            String externalAccountId, String accessToken, String cursor, int limit) {
-        int effectiveLimit = Math.min(limit <= 0 ? DEFAULT_LIMIT : limit, MAX_LIMIT);
-        GraphDtos.PostsResponse response = graphClient.getPublishedPosts(
-                externalAccountId, accessToken, cursor, effectiveLimit, null, null, null);
-
-        List<GraphDtos.Post> data = response.data() != null ? response.data() : List.of();
-        List<ProviderPost> posts = data.stream().map(this::toProviderPost).toList();
-
-        String nextCursor = response.paging() != null && response.paging().cursors() != null
-                ? response.paging().cursors().after()
-                : null;
-        return new ProviderPostPage(posts, nextCursor);
     }
 
     /** Maps a Graph post (with engagement summaries) to the platform-agnostic DTO. */

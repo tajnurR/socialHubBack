@@ -28,8 +28,10 @@ import java.time.temporal.ChronoUnit;
 import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
@@ -41,7 +43,7 @@ import org.springframework.stereotype.Service;
  * previous-period comparison + time-series (bucketed) + filtered/sorted posts.
  *
  * <p>Engagement = reactions + comments + shares. Filtering/sorting/bucketing are
- * done server-side. The expensive Graph fetch (posts within a date range) is
+ * done server-side. The expensive Graph fetch (all posts or posts within a date range) is
  * cached briefly per (integration, range) to respect Graph rate limits; filters
  * are applied in-memory so the UI stays responsive. Page profile is best-effort
  * and degrades gracefully (post-level metrics are always shown).
@@ -52,7 +54,6 @@ public class FacebookAnalyticsService {
     private static final Logger log = LoggerFactory.getLogger(FacebookAnalyticsService.class);
 
     private static final int PER_PAGE = 25;
-    private static final int MAX_POSTS = 200;
     private static final long CACHE_TTL_MS = 60_000;
 
     public enum SortBy { DATE, LIKES, COMMENTS, SHARES, ENGAGEMENT }
@@ -61,7 +62,7 @@ public class FacebookAnalyticsService {
 
     public enum Granularity { DAY, WEEK }
 
-    private record FetchResult(List<ProviderPost> posts, boolean capped) {}
+    private record FetchResult(List<ProviderPost> posts) {}
 
     private record CacheEntry(Instant expiresAt, FetchResult result) {}
 
@@ -131,7 +132,7 @@ public class FacebookAnalyticsService {
         PeriodComparison comparison = buildComparison(
                 integrationId, pageId, token, from, to, minLikes, minComments, summary, apiVersion);
 
-        return new AnalyticsDashboard(pageInfo, summary, comparison, series, rows, fetched.capped());
+        return new AnalyticsDashboard(pageInfo, summary, comparison, series, rows);
     }
 
     // --- fetching (cached) ---------------------------------------------------
@@ -151,10 +152,10 @@ public class FacebookAnalyticsService {
     private FetchResult fetchPosts(
             Long integrationId, String pageId, String token, String from, String to, String apiVersion) {
         List<ProviderPost> posts = new ArrayList<>();
-        boolean capped = false;
+        Set<String> seenCursors = new HashSet<>();
         String cursor = null;
         try {
-            while (posts.size() < MAX_POSTS) {
+            while (true) {
                 GraphDtos.PostsResponse response =
                         graphClient.getPublishedPosts(pageId, token, cursor, PER_PAGE, from, to, apiVersion);
                 List<GraphDtos.Post> data = response.data() != null ? response.data() : List.of();
@@ -165,8 +166,7 @@ public class FacebookAnalyticsService {
                 if (data.isEmpty() || cursor == null) {
                     break;
                 }
-                if (posts.size() >= MAX_POSTS) {
-                    capped = true;
+                if (!seenCursors.add(cursor)) {
                     break;
                 }
             }
@@ -174,7 +174,7 @@ public class FacebookAnalyticsService {
             statusUpdater.markReauthRequired(integrationId);
             throw ex;
         }
-        return new FetchResult(posts, capped);
+        return new FetchResult(posts);
     }
 
     // --- aggregation ---------------------------------------------------------

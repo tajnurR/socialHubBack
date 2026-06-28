@@ -11,13 +11,10 @@ import com.socialhub.socialhubBackend.integration.core.domain.SocialIntegration;
 import com.socialhub.socialhubBackend.integration.core.dto.ConnectIntegrationRequest;
 import com.socialhub.socialhubBackend.integration.core.dto.CreatePostRequest;
 import com.socialhub.socialhubBackend.integration.core.dto.CreatePostResponse;
-import com.socialhub.socialhubBackend.integration.core.dto.IntegrationPostPageResponse;
-import com.socialhub.socialhubBackend.integration.core.dto.IntegrationPostResponse;
 import com.socialhub.socialhubBackend.integration.core.dto.IntegrationResponse;
 import com.socialhub.socialhubBackend.integration.core.dto.ProviderInfo;
 import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.CreatePostCommand;
 import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.ProviderAccount;
-import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.ProviderPostPage;
 import com.socialhub.socialhubBackend.integration.core.exception.ProviderAuthException;
 import com.socialhub.socialhubBackend.integration.core.mapper.IntegrationMapper;
 import com.socialhub.socialhubBackend.integration.core.repository.SocialIntegrationRepository;
@@ -145,25 +142,6 @@ public class IntegrationService {
     @Transactional
     public void disconnect(Long id) {
         repository.delete(getOwnedIntegration(id));
-    }
-
-    public IntegrationPostPageResponse getPosts(Long id, String cursor, int limit) {
-        SocialIntegration integration = getOwnedIntegration(id);
-        SocialMediaProvider provider = registry.get(integration.getPlatform());
-        String token = encryptionService.decrypt(integration.getAccessToken());
-
-        ProviderPostPage page;
-        try {
-            page = provider.getPosts(integration.getExternalAccountId(), token, cursor, limit);
-        } catch (ProviderAuthException ex) {
-            statusUpdater.markReauthRequired(integration.getId());
-            throw ex;
-        }
-        List<IntegrationPostResponse> posts = page.posts().stream()
-                .map(p -> new IntegrationPostResponse(
-                        p.externalId(), p.message(), p.createdTime(), p.fullPicture(), p.permalinkUrl()))
-                .toList();
-        return new IntegrationPostPageResponse(posts, page.nextCursor());
     }
 
     public CreatePostResponse createPost(Long id, CreatePostRequest request) {

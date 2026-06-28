@@ -2,7 +2,6 @@ package com.socialhub.socialhubBackend.integration.core.dto;
 
 import com.socialhub.socialhubBackend.integration.core.SocialPlatform;
 import java.time.Instant;
-import java.util.List;
 
 /**
  * Platform-agnostic DTOs exchanged with {@code SocialMediaProvider} implementations.
@@ -37,9 +36,6 @@ public final class ProviderDtos {
             long commentCount,
             long shareCount,
             long reactionCount) {}
-
-    /** A page of posts plus an opaque cursor for the next page (null if none). */
-    public record ProviderPostPage(List<ProviderPost> posts, String nextCursor) {}
 
     /** Reference to a newly created post. */
     public record ProviderPostRef(String externalPostId) {}

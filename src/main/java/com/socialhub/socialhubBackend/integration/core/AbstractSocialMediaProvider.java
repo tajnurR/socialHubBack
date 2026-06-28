@@ -3,7 +3,6 @@ package com.socialhub.socialhubBackend.integration.core;
 import com.socialhub.socialhubBackend.common.exception.BusinessException;
 import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.CreatePostCommand;
 import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.ProviderAccount;
-import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.ProviderPostPage;
 import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.ProviderPostRef;
 import java.util.Map;
 
@@ -17,12 +16,6 @@ public abstract class AbstractSocialMediaProvider implements SocialMediaProvider
     @Override
     public ProviderAccount validateCredentials(Map<String, String> credentials) {
         throw notImplemented("validateCredentials");
-    }
-
-    @Override
-    public ProviderPostPage getPosts(
-            String externalAccountId, String accessToken, String cursor, int limit) {
-        throw notImplemented("getPosts");
     }
 
     @Override

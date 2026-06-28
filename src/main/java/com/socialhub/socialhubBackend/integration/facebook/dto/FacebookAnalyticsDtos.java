@@ -67,15 +67,11 @@ public final class FacebookAnalyticsDtos {
             long reactions,
             long engagement) {}
 
-    /**
-     * Full dashboard payload. {@code capped} = the page has more posts than the
-     * analyzed window; {@code comparison} is null when no previous period applies.
-     */
+    /** Full dashboard payload. {@code comparison} is null when no previous period applies. */
     public record AnalyticsDashboard(
             PageInfo page,
             KpiSummary summary,
             PeriodComparison comparison,
             List<TimeSeriesPoint> series,
-            List<PostRow> posts,
-            boolean capped) {}
+            List<PostRow> posts) {}
 }

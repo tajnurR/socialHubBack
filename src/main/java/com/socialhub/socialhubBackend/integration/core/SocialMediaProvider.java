@@ -2,7 +2,6 @@ package com.socialhub.socialhubBackend.integration.core;
 
 import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.CreatePostCommand;
 import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.ProviderAccount;
-import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.ProviderPostPage;
 import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.ProviderPostRef;
 import java.util.Map;
 
@@ -34,9 +33,6 @@ public interface SocialMediaProvider {
      *                    (e.g. {@code pageId}, {@code accessToken} for Facebook)
      */
     ProviderAccount validateCredentials(Map<String, String> credentials);
-
-    /** List posts for a connected account. {@code cursor} is an opaque page token (nullable). */
-    ProviderPostPage getPosts(String externalAccountId, String accessToken, String cursor, int limit);
 
     /** Create a post on a connected account. */
     ProviderPostRef createPost(String externalAccountId, String accessToken, CreatePostCommand command);
