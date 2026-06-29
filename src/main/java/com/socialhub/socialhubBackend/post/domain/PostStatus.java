@@ -7,5 +7,6 @@ public enum PostStatus {
     POSTED,
     NOT_POSTED,
     FAILED,
-    PAUSED
+    PAUSED,
+    CANCELLED
 }

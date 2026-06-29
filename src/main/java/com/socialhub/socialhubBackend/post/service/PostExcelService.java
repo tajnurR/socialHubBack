@@ -1,6 +1,7 @@
 package com.socialhub.socialhubBackend.post.service;
 
 import com.socialhub.socialhubBackend.common.exception.BusinessException;
+import com.socialhub.socialhubBackend.integration.core.SocialPlatform;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -41,7 +42,7 @@ public class PostExcelService {
         }
     }
 
-    public byte[] generateTemplate() {
+    public byte[] generateTemplate(SocialPlatform platform) {
         try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             Sheet sheet = workbook.createSheet("Posts");
 
@@ -60,8 +61,8 @@ public class PostExcelService {
 
             // Example row to show the expected shape.
             Row example = sheet.createRow(1);
-            example.createCell(0).setCellValue("Check out our new launch! 🚀");
-            example.createCell(1).setCellValue("1234567890   (your Page ID)");
+            example.createCell(0).setCellValue(exampleMessage(platform));
+            example.createCell(1).setCellValue("1234567890   (your " + accountLabel(platform) + " ID)");
             example.createCell(2).setCellValue("SKU-PRO   (optional)");
             example.createCell(3).setCellValue("https://example.com   (optional)");
             example.createCell(4).setCellValue("2026-07-01T09:00   (optional)");
@@ -71,6 +72,24 @@ public class PostExcelService {
         } catch (IOException ex) {
             throw new BusinessException("Failed to generate the template");
         }
+    }
+
+    private String exampleMessage(SocialPlatform platform) {
+        return switch (platform) {
+            case INSTAGRAM -> "New launch caption with campaign hashtags";
+            case LINKEDIN -> "Professional update for our company audience";
+            case X -> "Short update for X";
+            default -> "Check out our new launch!";
+        };
+    }
+
+    private String accountLabel(SocialPlatform platform) {
+        return switch (platform) {
+            case INSTAGRAM -> "Instagram account";
+            case LINKEDIN -> "LinkedIn page/profile";
+            case X -> "X account";
+            default -> "Page/account";
+        };
     }
 
     public List<RawRow> parse(InputStream inputStream) {

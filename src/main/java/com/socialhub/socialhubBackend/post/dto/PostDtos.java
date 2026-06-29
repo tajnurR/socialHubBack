@@ -13,7 +13,9 @@ public final class PostDtos {
     public record PostResponse(
             Long id,
             Long socialIntegrationId,
+            String targetAccountName,
             SocialPlatform platform,
+            String title,
             String content,
             String link,
             String mediaUrl,
@@ -24,11 +26,35 @@ public final class PostDtos {
             String externalPostId,
             String errorMessage,
             Long scheduleEventId,
-            Instant createdAt) {}
+            String scheduleName,
+            Instant createdAt,
+            Instant updatedAt) {}
+
+    /** Create a single owned post from the Post Management form. */
+    public record CreatePostRequest(
+            SocialPlatform platform,
+            Long socialIntegrationId,
+            Long scheduleEventId,
+            String title,
+            String content,
+            String link,
+            String mediaUrl,
+            Long productId,
+            PostStatus status,
+            Instant scheduledAt) {}
 
     /** Editable fields of a draft. */
     public record UpdatePostRequest(
-            String content, String link, String mediaUrl, Long productId, Long socialIntegrationId) {}
+            SocialPlatform platform,
+            Long socialIntegrationId,
+            Long scheduleEventId,
+            String title,
+            String content,
+            String link,
+            String mediaUrl,
+            Long productId,
+            PostStatus status,
+            Instant scheduledAt) {}
 
     /** Outcome of a bulk upload: how many imported + per-row errors. */
     public record BulkUploadResult(int importedCount, List<RowError> errors) {}

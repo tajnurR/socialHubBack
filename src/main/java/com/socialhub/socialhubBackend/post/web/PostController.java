@@ -1,14 +1,17 @@
 package com.socialhub.socialhubBackend.post.web;
 
 import com.socialhub.socialhubBackend.common.response.ApiResponse;
+import com.socialhub.socialhubBackend.integration.core.SocialPlatform;
 import com.socialhub.socialhubBackend.post.domain.PostStatus;
 import com.socialhub.socialhubBackend.post.dto.PostDtos.BulkUploadResult;
+import com.socialhub.socialhubBackend.post.dto.PostDtos.CreatePostRequest;
 import com.socialhub.socialhubBackend.post.dto.PostDtos.PostResponse;
 import com.socialhub.socialhubBackend.post.dto.PostDtos.UpdatePostRequest;
 import com.socialhub.socialhubBackend.post.service.PostService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import java.time.Instant;
 import java.util.List;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -41,33 +44,50 @@ public class PostController {
 
     @GetMapping("/template")
     @Operation(summary = "Download the bulk-upload Excel template")
-    public ResponseEntity<byte[]> template() {
-        byte[] body = postService.template();
+    public ResponseEntity<byte[]> template(
+            @RequestParam(required = false, defaultValue = "FACEBOOK") SocialPlatform platform) {
+        byte[] body = postService.template(platform);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION,
-                        ContentDisposition.attachment().filename("bulk-posts-template.xlsx").build().toString())
+                        ContentDisposition.attachment()
+                                .filename(platform.name().toLowerCase() + "-posts-template.xlsx")
+                                .build()
+                                .toString())
                 .contentType(MediaType.parseMediaType(XLSX))
                 .body(body);
     }
 
     @PostMapping(path = "/bulk-upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(summary = "Upload a filled template; imports valid rows as DRAFT posts")
-    public ApiResponse<BulkUploadResult> bulkUpload(@RequestParam("file") MultipartFile file) {
-        return ApiResponse.ok(postService.bulkUpload(file), "Bulk upload processed");
+    public ApiResponse<BulkUploadResult> bulkUpload(
+            @RequestParam SocialPlatform platform,
+            @RequestParam("file") MultipartFile file) {
+        return ApiResponse.ok(postService.bulkUpload(platform, file), "Bulk upload processed");
     }
 
     @GetMapping
-    @Operation(summary = "List the user's posts (filter by status/page/product)")
+    @Operation(summary = "List the user's posts with post-management filters")
     public ApiResponse<List<PostResponse>> list(
+            @RequestParam(required = false) String keyword,
             @RequestParam(required = false) PostStatus status,
+            @RequestParam(required = false) SocialPlatform platform,
             @RequestParam(required = false) Long pageId,
-            @RequestParam(required = false) Long productId) {
-        return ApiResponse.ok(postService.list(status, pageId, productId));
+            @RequestParam(required = false) Long productId,
+            @RequestParam(required = false) Long scheduleId,
+            @RequestParam(required = false) Instant from,
+            @RequestParam(required = false) Instant to) {
+        return ApiResponse.ok(postService.list(keyword, status, platform, pageId, productId, scheduleId, from, to));
     }
 
     @GetMapping("/{id}")
     public ApiResponse<PostResponse> get(@PathVariable Long id) {
         return ApiResponse.ok(postService.get(id));
+    }
+
+    @PostMapping
+    @Operation(summary = "Create a single post")
+    public ApiResponse<PostResponse> create(@Valid @RequestBody CreatePostRequest request) {
+        return ApiResponse.ok(postService.create(request), "Post saved");
     }
 
     @PutMapping("/{id}")
