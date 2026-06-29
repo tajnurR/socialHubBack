@@ -38,7 +38,7 @@ spring:
     baseline-on-migrate: true
 
 server:
-  port: ${SERVER_PORT:8080}
+  port: ${SERVER_PORT:8081}
   error:
     include-message: always
     include-binding-errors: always
@@ -79,6 +79,12 @@ app:
       # database — there is no global/shared Meta app credential.
       graph-base-url: ${FACEBOOK_GRAPH_BASE_URL:https://graph.facebook.com}
       api-version: ${FACEBOOK_GRAPH_API_VERSION:v25.0}
+  scheduler:
+    # Automatic due-post publishing is opt-in. Schedules can plan and manage posts
+    # without a background worker publishing them until this is explicitly enabled.
+    enabled: ${SCHEDULED_PUBLISHER_ENABLED:false}
+    poll-interval-ms: ${SCHEDULED_PUBLISHER_POLL_INTERVAL_MS:60000}
+    initial-delay-ms: ${SCHEDULED_PUBLISHER_INITIAL_DELAY_MS:20000}
 
 springdoc:
   api-docs:

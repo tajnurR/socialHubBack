@@ -8,5 +8,10 @@ package com.socialhub.socialhubBackend.integration.core;
 public enum SocialPlatform {
     FACEBOOK,
     INSTAGRAM,
-    WHATSAPP
+    WHATSAPP,
+    TIKTOK,
+    YOUTUBE,
+    LINKEDIN,
+    X,
+    PINTEREST
 }
