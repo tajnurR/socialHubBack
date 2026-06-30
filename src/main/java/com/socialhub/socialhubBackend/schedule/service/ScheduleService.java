@@ -374,7 +374,6 @@ public class ScheduleService {
         post.setScheduledAt(request.scheduledAt() != null
                 ? request.scheduledAt()
                 : event.getStartDate().atTime(event.getPostingTime()).plusDays(index).toInstant(ZoneOffset.UTC));
-        post.setStatus(request.status() != null ? request.status() : PostStatus.DRAFT);
         post.setMediaUrl(blankToNull(request.mediaUrl()));
         post.setLink(blankToNull(request.link()));
         post.setHashtags(joinStrings(request.hashtags()));
@@ -387,6 +386,42 @@ public class ScheduleService {
                     .orElseThrow(() -> new BusinessException("That page is not connected or not yours."));
         }
         post.setSocialIntegrationId(request.socialIntegrationId());
+        PostStatus status = effectivePostStatus(event, request);
+        if (status == PostStatus.SCHEDULED) {
+            if (post.getScheduledAt() == null) {
+                throw new BusinessException("Scheduled posts require a publish date and time.");
+            }
+            if (post.getSocialIntegrationId() == null) {
+                throw new BusinessException("Select a target page/account before scheduling a post.");
+            }
+        }
+        if (status == PostStatus.POSTED && post.getPublishedAt() == null) {
+            throw new BusinessException("Use publish-now or the scheduler to publish a post.");
+        }
+        post.setStatus(status);
+        if (status == PostStatus.SCHEDULED) {
+            post.setErrorMessage(null);
+            post.setRetryCount(0);
+        }
+    }
+
+    private PostStatus effectivePostStatus(ScheduleEvent event, SchedulePostRequest request) {
+        String scheduleStatus = normalizeStatus(event.getStatus());
+        PostStatus requested = request.status();
+        if ("draft".equals(scheduleStatus)) {
+            return PostStatus.DRAFT;
+        }
+        if ("paused".equals(scheduleStatus)) {
+            return PostStatus.PAUSED;
+        }
+        if ("active".equals(scheduleStatus)) {
+            if (requested == PostStatus.POSTED || requested == PostStatus.FAILED
+                    || requested == PostStatus.NOT_POSTED || requested == PostStatus.PAUSED) {
+                return requested;
+            }
+            return PostStatus.SCHEDULED;
+        }
+        return requested != null ? requested : PostStatus.DRAFT;
     }
 
     private ScheduleResponse toScheduleResponse(ScheduleEvent event) {
@@ -744,4 +779,3 @@ public class ScheduleService {
         return value == null || value.isBlank() ? fallback : value.trim();
     }
 }
-

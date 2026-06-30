@@ -46,15 +46,24 @@ public class PostPublisher {
 
     /** Attempts to publish the post; sets POSTED (+ external id) or FAILED (+ error). */
     public void publish(Post post) {
-        SocialIntegration integration = integrationRepository
-                .findByIdAndOrganizationIdAndUserId(
-                        post.getSocialIntegrationId(), post.getOrganizationId(), post.getUserId())
-                .orElse(null);
-        if (integration == null) {
-            fail(post, "Target page is not connected (or no longer owned by you).");
+        if (post.getSocialIntegrationId() == null) {
+            fail(post, "Select a target page/account before publishing.");
             return;
         }
+        if (post.getContent() == null || post.getContent().isBlank()) {
+            fail(post, "Post message is required.");
+            return;
+        }
+        SocialIntegration integration = null;
         try {
+            integration = integrationRepository
+                    .findByIdAndOrganizationIdAndUserId(
+                            post.getSocialIntegrationId(), post.getOrganizationId(), post.getUserId())
+                    .orElse(null);
+            if (integration == null) {
+                fail(post, "Target page is not connected (or no longer owned by you).");
+                return;
+            }
             SocialMediaProvider provider = registry.get(integration.getPlatform());
             String token = encryptionService.decrypt(integration.getAccessToken());
             ProviderPostRef ref = provider.createPost(
@@ -66,7 +75,9 @@ public class PostPublisher {
             post.setPublishedAt(Instant.now());
             post.setErrorMessage(null);
         } catch (ProviderAuthException ex) {
-            statusUpdater.markReauthRequired(integration.getId());
+            if (integration != null) {
+                statusUpdater.markReauthRequired(integration.getId());
+            }
             fail(post, "Reconnect needed: " + ex.getMessage());
         } catch (RuntimeException ex) {
             log.warn("Publish failed for post {}: {}", post.getId(), ex.getMessage());

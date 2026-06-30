@@ -80,9 +80,9 @@ app:
       graph-base-url: ${FACEBOOK_GRAPH_BASE_URL:https://graph.facebook.com}
       api-version: ${FACEBOOK_GRAPH_API_VERSION:v25.0}
   scheduler:
-    # Automatic due-post publishing is opt-in. Schedules can plan and manage posts
-    # without a background worker publishing them until this is explicitly enabled.
-    enabled: ${SCHEDULED_PUBLISHER_ENABLED:false}
+    # Automatic due-post publishing is enabled by default so active schedules publish
+    # due posts. Set SCHEDULED_PUBLISHER_ENABLED=false for planning-only environments.
+    enabled: ${SCHEDULED_PUBLISHER_ENABLED:true}
     poll-interval-ms: ${SCHEDULED_PUBLISHER_POLL_INTERVAL_MS:60000}
     initial-delay-ms: ${SCHEDULED_PUBLISHER_INITIAL_DELAY_MS:20000}
 
