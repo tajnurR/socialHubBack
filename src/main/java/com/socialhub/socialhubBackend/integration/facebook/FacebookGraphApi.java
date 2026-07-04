@@ -22,7 +22,11 @@ public enum FacebookGraphApi {
     /** A page's published posts edge. */
     PAGE_PUBLISHED_POSTS("{pageId}/published_posts"),
     /** A page's feed edge (publish). */
-    PAGE_FEED("{pageId}/feed");
+    PAGE_FEED("{pageId}/feed"),
+    /** A page's photos edge (native image publish). */
+    PAGE_PHOTOS("{pageId}/photos"),
+    /** A page's videos edge (native video publish). */
+    PAGE_VIDEOS("{pageId}/videos");
 
     private final String template;
 

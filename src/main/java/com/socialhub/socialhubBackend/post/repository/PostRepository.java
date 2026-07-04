@@ -26,6 +26,8 @@ public interface PostRepository extends JpaRepository<Post, Long>, JpaSpecificat
     List<Post> findByOrganizationIdAndUserIdAndScheduleEventIdOrderByScheduledAtAsc(
             Long organizationId, Long userId, Long scheduleEventId);
 
+    long countByOrganizationIdAndUserIdAndMediaUrlIn(Long organizationId, Long userId, List<String> mediaUrls);
+
     List<Post> findByOrganizationIdAndUserIdAndScheduleEventIdOrderBySortOrderAscScheduledAtAsc(
             Long organizationId, Long userId, Long scheduleEventId);
 

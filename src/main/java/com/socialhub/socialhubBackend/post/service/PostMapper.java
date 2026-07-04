@@ -32,6 +32,7 @@ public class PostMapper {
                 p.getContent(),
                 p.getLink(),
                 p.getMediaUrl(),
+                p.getMediaType(),
                 p.getProductId(),
                 p.getStatus(),
                 p.getScheduledAt(),

@@ -30,15 +30,24 @@ public class PostExcelService {
 
     /** Column headers (order matters for the template; lookup on upload is by name). */
     public static final List<String> COLUMNS =
-            List.of("message", "pageId", "productSku", "link", "scheduledAt");
+            List.of("postContent", "product", "postTitle", "pageId", "imageUrl", "videoUrl", "productSku", "link");
 
     /** A parsed-but-unvalidated row (1-based {@code rowNumber} as shown in Excel). */
     public record RawRow(
-            int rowNumber, String message, String pageId, String productSku, String link, String scheduledAt) {
+            int rowNumber,
+            String postContent,
+            String product,
+            String postTitle,
+            String pageId,
+            String imageUrl,
+            String videoUrl,
+            String productSku,
+            String link) {
 
         public boolean isBlank() {
-            return message.isBlank() && pageId.isBlank() && productSku.isBlank()
-                    && link.isBlank() && scheduledAt.isBlank();
+            return postContent.isBlank() && product.isBlank() && postTitle.isBlank()
+                    && pageId.isBlank() && imageUrl.isBlank() && videoUrl.isBlank()
+                    && productSku.isBlank() && link.isBlank();
         }
     }
 
@@ -62,10 +71,13 @@ public class PostExcelService {
             // Example row to show the expected shape.
             Row example = sheet.createRow(1);
             example.createCell(0).setCellValue(exampleMessage(platform));
-            example.createCell(1).setCellValue("1234567890   (your " + accountLabel(platform) + " ID)");
-            example.createCell(2).setCellValue("SKU-PRO   (optional)");
-            example.createCell(3).setCellValue("https://example.com   (optional)");
-            example.createCell(4).setCellValue("2026-07-01T09:00   (optional)");
+            example.createCell(1).setCellValue("Pro Plan");
+            example.createCell(2).setCellValue("Launch announcement");
+            example.createCell(3).setCellValue("1234567890   (your " + accountLabel(platform) + " ID or name)");
+            example.createCell(4).setCellValue("https://example.com/photo.jpg   (optional)");
+            example.createCell(5).setCellValue("");
+            example.createCell(6).setCellValue("SKU-PRO   (optional)");
+            example.createCell(7).setCellValue("https://example.com   (optional)");
 
             workbook.write(out);
             return out.toByteArray();
@@ -103,7 +115,7 @@ public class PostExcelService {
                 throw new BusinessException("The sheet is empty — download the template first.");
             }
             Map<String, Integer> columnIndex = headerIndex(header);
-            for (String required : List.of("message", "pageId")) {
+            for (String required : List.of("postContent", "product", "postTitle", "pageId")) {
                 if (!columnIndex.containsKey(required)) {
                     throw new BusinessException(
                             "Missing required column '" + required + "'. Use the provided template.");
@@ -118,11 +130,14 @@ public class PostExcelService {
                 }
                 RawRow raw = new RawRow(
                         r + 1,
-                        value(row, columnIndex, "message"),
+                        value(row, columnIndex, "postContent"),
+                        value(row, columnIndex, "product"),
+                        value(row, columnIndex, "postTitle"),
                         value(row, columnIndex, "pageId"),
+                        value(row, columnIndex, "imageUrl"),
+                        value(row, columnIndex, "videoUrl"),
                         value(row, columnIndex, "productSku"),
-                        value(row, columnIndex, "link"),
-                        value(row, columnIndex, "scheduledAt"));
+                        value(row, columnIndex, "link"));
                 if (!raw.isBlank()) {
                     rows.add(raw);
                 }

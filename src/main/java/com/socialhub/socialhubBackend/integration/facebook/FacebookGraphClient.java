@@ -240,6 +240,46 @@ public class FacebookGraphClient {
                 "create Facebook post");
     }
 
+    /** POST /{page-id}/photos — publish a native photo post from a public URL. */
+    public CreateResponse createPhotoPost(
+            String pageId, String accessToken, String imageUrl, String caption, String apiVersion) {
+        String path = FacebookGraphApi.PAGE_PHOTOS.path(resolveVersion(apiVersion), Map.of("pageId", pageId));
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("url", imageUrl);
+        if (caption != null && !caption.isBlank()) {
+            form.add("caption", caption);
+        }
+        return call(
+                () -> client.post()
+                        .uri(uri -> uri.path(path).build())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .body(form)
+                        .retrieve()
+                        .body(CreateResponse.class),
+                "create Facebook photo post");
+    }
+
+    /** POST /{page-id}/videos — publish a native video post from a public URL. */
+    public CreateResponse createVideoPost(
+            String pageId, String accessToken, String videoUrl, String description, String apiVersion) {
+        String path = FacebookGraphApi.PAGE_VIDEOS.path(resolveVersion(apiVersion), Map.of("pageId", pageId));
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("file_url", videoUrl);
+        if (description != null && !description.isBlank()) {
+            form.add("description", description);
+        }
+        return call(
+                () -> client.post()
+                        .uri(uri -> uri.path(path).build())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .body(form)
+                        .retrieve()
+                        .body(CreateResponse.class),
+                "create Facebook video post");
+    }
+
     /** Per-config override if provided, else the global default version. */
     private String resolveVersion(String apiVersion) {
         return apiVersion != null && !apiVersion.isBlank() ? apiVersion : properties.apiVersion();

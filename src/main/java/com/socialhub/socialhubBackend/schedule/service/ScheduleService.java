@@ -7,6 +7,7 @@ import com.socialhub.socialhubBackend.integration.core.repository.SocialIntegrat
 import com.socialhub.socialhubBackend.post.domain.Post;
 import com.socialhub.socialhubBackend.post.domain.PostStatus;
 import com.socialhub.socialhubBackend.post.repository.PostRepository;
+import com.socialhub.socialhubBackend.post.service.MediaUrlValidator;
 import com.socialhub.socialhubBackend.post.service.PostMapper;
 import com.socialhub.socialhubBackend.schedule.domain.ScheduleEvent;
 import com.socialhub.socialhubBackend.schedule.domain.ScheduleMode;
@@ -66,6 +67,7 @@ public class ScheduleService {
     private final PostRepository postRepository;
     private final SocialIntegrationRepository integrationRepository;
     private final PostMapper postMapper;
+    private final MediaUrlValidator mediaUrlValidator;
     private final CurrentUserProvider currentUserProvider;
 
     public ScheduleService(
@@ -74,12 +76,14 @@ public class ScheduleService {
             PostRepository postRepository,
             SocialIntegrationRepository integrationRepository,
             PostMapper postMapper,
+            MediaUrlValidator mediaUrlValidator,
             CurrentUserProvider currentUserProvider) {
         this.eventRepository = eventRepository;
         this.templateRepository = templateRepository;
         this.postRepository = postRepository;
         this.integrationRepository = integrationRepository;
         this.postMapper = postMapper;
+        this.mediaUrlValidator = mediaUrlValidator;
         this.currentUserProvider = currentUserProvider;
     }
 
@@ -375,6 +379,7 @@ public class ScheduleService {
                 ? request.scheduledAt()
                 : event.getStartDate().atTime(event.getPostingTime()).plusDays(index).toInstant(ZoneOffset.UTC));
         post.setMediaUrl(blankToNull(request.mediaUrl()));
+        post.setMediaType(mediaUrlValidator.validate(post.getMediaUrl()));
         post.setLink(blankToNull(request.link()));
         post.setHashtags(joinStrings(request.hashtags()));
         post.setCta(blankToNull(request.cta()));
@@ -390,6 +395,9 @@ public class ScheduleService {
         if (status == PostStatus.SCHEDULED) {
             if (post.getScheduledAt() == null) {
                 throw new BusinessException("Scheduled posts require a publish date and time.");
+            }
+            if (post.getContent() == null || post.getContent().isBlank()) {
+                throw new BusinessException("Post content is required before scheduling a post.");
             }
             if (post.getSocialIntegrationId() == null) {
                 throw new BusinessException("Select a target page/account before scheduling a post.");

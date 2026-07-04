@@ -118,8 +118,17 @@ public class FacebookProvider extends AbstractSocialMediaProvider {
         if (command.message() == null || command.message().isBlank()) {
             throw new BusinessException("Post message is required");
         }
-        GraphDtos.CreateResponse response = graphClient.createFeedPost(
-                externalAccountId, accessToken, command.message(), command.link(), null);
+        GraphDtos.CreateResponse response;
+        if (command.mediaType() == null) {
+            response = graphClient.createFeedPost(
+                    externalAccountId, accessToken, command.message(), command.link(), null);
+        } else if (command.mediaType() == com.socialhub.socialhubBackend.post.domain.PostMediaType.IMAGE) {
+            response = graphClient.createPhotoPost(
+                    externalAccountId, accessToken, command.mediaUrl(), command.message(), null);
+        } else {
+            response = graphClient.createVideoPost(
+                    externalAccountId, accessToken, command.mediaUrl(), command.message(), null);
+        }
         return new ProviderPostRef(response.id());
     }
 

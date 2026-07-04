@@ -69,7 +69,7 @@ public class PostPublisher {
             ProviderPostRef ref = provider.createPost(
                     integration.getExternalAccountId(),
                     token,
-                    new CreatePostCommand(post.getContent(), post.getLink()));
+                    new CreatePostCommand(post.getContent(), post.getLink(), post.getMediaUrl(), post.getMediaType()));
             post.setExternalPostId(ref.externalPostId());
             post.setStatus(PostStatus.POSTED);
             post.setPublishedAt(Instant.now());

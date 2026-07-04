@@ -1,6 +1,7 @@
 package com.socialhub.socialhubBackend.integration.core.dto;
 
 import com.socialhub.socialhubBackend.integration.core.SocialPlatform;
+import com.socialhub.socialhubBackend.post.domain.PostMediaType;
 import java.time.Instant;
 
 /**
@@ -22,8 +23,8 @@ public final class ProviderDtos {
     public record ProviderAccount(
             SocialPlatform platform, String externalAccountId, String displayName, String accessToken) {}
 
-    /** Command to create a post. {@code link} optional; media fields added later. */
-    public record CreatePostCommand(String message, String link) {}
+    /** Command to create a post. Media posts publish natively when media fields are present. */
+    public record CreatePostCommand(String message, String link, String mediaUrl, PostMediaType mediaType) {}
 
     /** A post as represented by the external platform, with engagement counts. */
     public record ProviderPost(

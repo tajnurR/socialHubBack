@@ -6,6 +6,7 @@ import com.socialhub.socialhubBackend.integration.core.SocialPlatform;
 import com.socialhub.socialhubBackend.integration.core.domain.SocialIntegration;
 import com.socialhub.socialhubBackend.integration.core.repository.SocialIntegrationRepository;
 import com.socialhub.socialhubBackend.post.domain.Post;
+import com.socialhub.socialhubBackend.post.domain.PostMediaType;
 import com.socialhub.socialhubBackend.post.domain.PostStatus;
 import com.socialhub.socialhubBackend.post.dto.PostDtos.BulkUploadResult;
 import com.socialhub.socialhubBackend.post.dto.PostDtos.CreatePostRequest;
@@ -14,6 +15,7 @@ import com.socialhub.socialhubBackend.post.dto.PostDtos.RowError;
 import com.socialhub.socialhubBackend.post.dto.PostDtos.UpdatePostRequest;
 import com.socialhub.socialhubBackend.post.repository.PostRepository;
 import com.socialhub.socialhubBackend.post.service.PostExcelService.RawRow;
+import com.socialhub.socialhubBackend.product.domain.Product;
 import com.socialhub.socialhubBackend.product.repository.ProductRepository;
 import com.socialhub.socialhubBackend.schedule.repository.ScheduleEventRepository;
 import com.socialhub.socialhubBackend.user.context.CurrentUser;
@@ -21,12 +23,10 @@ import com.socialhub.socialhubBackend.user.context.CurrentUserProvider;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
@@ -45,6 +45,7 @@ public class PostService {
     private final ScheduleEventRepository scheduleEventRepository;
     private final SocialIntegrationRepository integrationRepository;
     private final PostExcelService excelService;
+    private final MediaUrlValidator mediaUrlValidator;
     private final PostPublisher postPublisher;
     private final PostMapper postMapper;
     private final CurrentUserProvider currentUserProvider;
@@ -55,6 +56,7 @@ public class PostService {
             ScheduleEventRepository scheduleEventRepository,
             SocialIntegrationRepository integrationRepository,
             PostExcelService excelService,
+            MediaUrlValidator mediaUrlValidator,
             PostPublisher postPublisher,
             PostMapper postMapper,
             CurrentUserProvider currentUserProvider) {
@@ -63,6 +65,7 @@ public class PostService {
         this.scheduleEventRepository = scheduleEventRepository;
         this.integrationRepository = integrationRepository;
         this.excelService = excelService;
+        this.mediaUrlValidator = mediaUrlValidator;
         this.postPublisher = postPublisher;
         this.postMapper = postMapper;
         this.currentUserProvider = currentUserProvider;
@@ -114,8 +117,8 @@ public class PostService {
         post.setUserId(user.userId());
         post.setPlatform(platform);
         applyEditable(post, request.title(), request.content(), request.link(), request.mediaUrl(),
-                request.productId(), request.socialIntegrationId(), request.scheduleEventId(),
-                request.status(), request.scheduledAt(), platform);
+                request.productId(), request.socialIntegrationId(), null,
+                PostStatus.DRAFT, null, platform);
         return postMapper.toResponse(postRepository.save(post));
     }
 
@@ -127,19 +130,27 @@ public class PostService {
         SocialPlatform selectedPlatform = requirePlatform(platform);
         CurrentUser user = currentUserProvider.currentUser();
 
-        // The user's own platform accounts/pages (by external id) and products (by SKU) — isolation.
-        Map<String, SocialIntegration> accountsByExternalId = integrationRepository
+        // The user's own platform accounts/pages and products — all matched inside the owner scope.
+        Map<String, SocialIntegration> accountsByIdentifier = new HashMap<>();
+        integrationRepository
                 .findByOrganizationIdAndUserId(user.organizationId(), user.userId())
                 .stream()
                 .filter(i -> i.getPlatform() == selectedPlatform)
-                .collect(Collectors.toMap(
-                        SocialIntegration::getExternalAccountId, Function.identity(), (a, b) -> a));
-        Map<String, Long> productIdBySku = productRepository
-                .findByOrganizationIdAndUserIdOrderByNameAsc(user.organizationId(), user.userId())
+                .forEach(i -> {
+                    putIdentifier(accountsByIdentifier, i.getExternalAccountId(), i);
+                    putIdentifier(accountsByIdentifier, i.getDisplayName(), i);
+                });
+        List<Product> products = productRepository
+                .findByOrganizationIdAndUserIdOrderByNameAsc(user.organizationId(), user.userId());
+        Map<String, Long> productIdBySku = products
                 .stream()
                 .filter(p -> p.getSku() != null && !p.getSku().isBlank())
                 .collect(Collectors.toMap(
-                        p -> p.getSku().trim().toLowerCase(), com.socialhub.socialhubBackend.product.domain.Product::getId, (a, b) -> a));
+                        p -> normalizeKey(p.getSku()), Product::getId, (a, b) -> a));
+        Map<String, Long> productIdByName = products
+                .stream()
+                .collect(Collectors.toMap(
+                        p -> normalizeKey(p.getName()), Product::getId, (a, b) -> a));
 
         List<RawRow> rows;
         try (InputStream in = file.getInputStream()) {
@@ -152,7 +163,7 @@ public class PostService {
         List<RowError> errors = new ArrayList<>();
         for (RawRow row : rows) {
             try {
-                toImport.add(buildPost(row, user, selectedPlatform, accountsByExternalId, productIdBySku));
+                toImport.add(buildPost(row, user, selectedPlatform, accountsByIdentifier, productIdByName, productIdBySku));
             } catch (RowValidationException ex) {
                 errors.add(new RowError(row.rowNumber(), ex.getMessage()));
             }
@@ -170,8 +181,8 @@ public class PostService {
         SocialPlatform platform = request.platform() == null ? post.getPlatform() : request.platform();
         post.setPlatform(platform);
         applyEditable(post, request.title(), request.content(), request.link(), request.mediaUrl(),
-                request.productId(), request.socialIntegrationId(), request.scheduleEventId(),
-                request.status(), request.scheduledAt(), platform);
+                request.productId(), request.socialIntegrationId(), post.getScheduleEventId(),
+                post.getStatus(), post.getScheduledAt(), platform);
         return postMapper.toResponse(postRepository.save(post));
     }
 
@@ -209,22 +220,36 @@ public class PostService {
             RawRow row,
             CurrentUser user,
             SocialPlatform platform,
-            Map<String, SocialIntegration> accountsByExternalId,
+            Map<String, SocialIntegration> accountsByIdentifier,
+            Map<String, Long> productIdByName,
             Map<String, Long> productIdBySku) {
-        if (row.message().isBlank()) {
-            throw new RowValidationException("message is required");
+        if (row.postContent().isBlank()) {
+            throw new RowValidationException("postContent is required");
+        }
+        if (row.postTitle().isBlank()) {
+            throw new RowValidationException("postTitle is required");
+        }
+        if (row.product().isBlank()) {
+            throw new RowValidationException("product is required");
         }
         if (row.pageId().isBlank()) {
             throw new RowValidationException("pageId is required");
         }
         // pageId in the sheet may include trailing helper text in the example; take the first token.
         String accountId = row.pageId().split("\\s+")[0];
-        SocialIntegration account = accountsByExternalId.get(accountId);
+        SocialIntegration account = accountsByIdentifier.get(normalizeKey(accountId));
         if (account == null) {
-            throw new RowValidationException("You have no connected " + platform.name() + " account with id " + accountId);
+            account = accountsByIdentifier.get(normalizeKey(row.pageId()));
+        }
+        if (account == null) {
+            throw new RowValidationException(
+                    "You have no connected " + platform.name() + " account/page matching " + row.pageId());
         }
 
-        Long productId = null;
+        Long productId = productIdByName.get(normalizeKey(row.product()));
+        if (productId == null) {
+            productId = productIdBySku.get(normalizeKey(row.product()));
+        }
         if (!row.productSku().isBlank()) {
             String sku = row.productSku().split("\\s+")[0].toLowerCase();
             productId = productIdBySku.get(sku);
@@ -232,21 +257,24 @@ public class PostService {
                 throw new RowValidationException("Unknown product SKU: " + sku);
             }
         }
-
-        Instant scheduledAt = null;
-        if (!row.scheduledAt().isBlank()) {
-            scheduledAt = parseInstant(row.scheduledAt().split("\\s+")[0]);
+        if (productId == null) {
+            throw new RowValidationException("Unknown product: " + row.product());
         }
+
+        MediaSelection media = mediaSelection(row.imageUrl(), row.videoUrl());
 
         Post post = new Post();
         post.setOrganizationId(user.organizationId());
         post.setUserId(user.userId());
         post.setSocialIntegrationId(account.getId());
         post.setPlatform(platform);
-        post.setContent(row.message());
+        post.setTitle(row.postTitle());
+        post.setContent(row.postContent());
         post.setLink(row.link().isBlank() ? null : row.link());
+        post.setMediaUrl(media.url());
+        post.setMediaType(media.type());
         post.setProductId(productId);
-        post.setScheduledAt(scheduledAt); // stored as a suggestion; status stays DRAFT until scheduled
+        post.setScheduledAt(null);
         post.setStatus(PostStatus.DRAFT);
         return post;
     }
@@ -264,9 +292,17 @@ public class PostService {
             Instant scheduledAt,
             SocialPlatform platform) {
         post.setTitle(blankToNull(title));
+        if (post.getTitle() == null) {
+            throw new BusinessException("Post title is required.");
+        }
         post.setContent(requiredContent(content));
         post.setLink(blankToNull(link));
-        post.setMediaUrl(blankToNull(mediaUrl));
+        String resolvedMediaUrl = blankToNull(mediaUrl);
+        post.setMediaUrl(resolvedMediaUrl);
+        post.setMediaType(mediaUrlValidator.validate(resolvedMediaUrl));
+        if (productId == null) {
+            throw new BusinessException("Product is required.");
+        }
         post.setProductId(resolveProductId(productId, post));
         post.setSocialIntegrationId(requireOwnedAccount(socialIntegrationId, post, platform).getId());
         post.setScheduleEventId(resolveScheduleId(scheduleEventId, post));
@@ -338,17 +374,49 @@ public class PostService {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
-    private Instant parseInstant(String value) {
-        try {
-            return Instant.parse(value);
-        } catch (RuntimeException ignored) {
-            try {
-                return LocalDateTime.parse(value).toInstant(ZoneOffset.UTC);
-            } catch (RuntimeException ex) {
-                throw new RowValidationException("Invalid scheduledAt (use e.g. 2026-07-01T09:00): " + value);
+    private MediaSelection mediaSelection(String imageUrl, String videoUrl) {
+        String image = blankToNull(imageUrl);
+        String video = blankToNull(videoUrl);
+        if (image != null && video != null) {
+            throw new RowValidationException("Use either imageUrl or videoUrl, not both.");
+        }
+        if (image != null) {
+            PostMediaType type = validateMediaRow(image);
+            if (type != PostMediaType.IMAGE) {
+                throw new RowValidationException("imageUrl must point to a supported image.");
             }
+            return new MediaSelection(image, type);
+        }
+        if (video != null) {
+            PostMediaType type = validateMediaRow(video);
+            if (type != PostMediaType.VIDEO) {
+                throw new RowValidationException("videoUrl must point to a supported video.");
+            }
+            return new MediaSelection(video, type);
+        }
+        return new MediaSelection(null, null);
+    }
+
+    private PostMediaType validateMediaRow(String url) {
+        try {
+            return mediaUrlValidator.validate(url);
+        } catch (BusinessException ex) {
+            throw new RowValidationException(ex.getMessage());
         }
     }
+
+    private void putIdentifier(Map<String, SocialIntegration> map, String value, SocialIntegration integration) {
+        String key = normalizeKey(value);
+        if (!key.isBlank()) {
+            map.putIfAbsent(key, integration);
+        }
+    }
+
+    private String normalizeKey(String value) {
+        return value == null ? "" : value.trim().toLowerCase();
+    }
+
+    private record MediaSelection(String url, PostMediaType type) {}
 
     /** Internal: a single row failed validation (carried as a per-row error). */
     private static final class RowValidationException extends RuntimeException {

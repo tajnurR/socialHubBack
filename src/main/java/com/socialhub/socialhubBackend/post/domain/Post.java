@@ -49,6 +49,10 @@ public class Post extends TenantBaseEntity {
     @Column(name = "media_url", length = 2000)
     private String mediaUrl;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "media_type", length = 20)
+    private PostMediaType mediaType;
+
     @Column(length = 500)
     private String hashtags;
 

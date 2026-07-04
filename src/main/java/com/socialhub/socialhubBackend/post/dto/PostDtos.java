@@ -1,7 +1,10 @@
 package com.socialhub.socialhubBackend.post.dto;
 
 import com.socialhub.socialhubBackend.integration.core.SocialPlatform;
+import com.socialhub.socialhubBackend.post.domain.PostMediaType;
 import com.socialhub.socialhubBackend.post.domain.PostStatus;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import java.time.Instant;
 import java.util.List;
 
@@ -19,6 +22,7 @@ public final class PostDtos {
             String content,
             String link,
             String mediaUrl,
+            PostMediaType mediaType,
             Long productId,
             PostStatus status,
             Instant scheduledAt,
@@ -32,29 +36,23 @@ public final class PostDtos {
 
     /** Create a single owned post from the Post Management form. */
     public record CreatePostRequest(
-            SocialPlatform platform,
-            Long socialIntegrationId,
-            Long scheduleEventId,
-            String title,
-            String content,
+            @NotNull SocialPlatform platform,
+            @NotNull Long socialIntegrationId,
+            @NotBlank String title,
+            @NotBlank String content,
             String link,
             String mediaUrl,
-            Long productId,
-            PostStatus status,
-            Instant scheduledAt) {}
+            @NotNull Long productId) {}
 
     /** Editable fields of a draft. */
     public record UpdatePostRequest(
             SocialPlatform platform,
             Long socialIntegrationId,
-            Long scheduleEventId,
             String title,
             String content,
             String link,
             String mediaUrl,
-            Long productId,
-            PostStatus status,
-            Instant scheduledAt) {}
+            Long productId) {}
 
     /** Outcome of a bulk upload: how many imported + per-row errors. */
     public record BulkUploadResult(int importedCount, List<RowError> errors) {}
