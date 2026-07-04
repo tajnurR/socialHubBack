@@ -35,6 +35,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class PostController {
 
     private static final String XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    private static final String CSV = "text/csv";
 
     private final PostService postService;
 
@@ -43,22 +44,24 @@ public class PostController {
     }
 
     @GetMapping("/template")
-    @Operation(summary = "Download the bulk-upload Excel template")
+    @Operation(summary = "Download the bulk-upload template as XLSX or CSV")
     public ResponseEntity<byte[]> template(
-            @RequestParam(required = false, defaultValue = "FACEBOOK") SocialPlatform platform) {
-        byte[] body = postService.template(platform);
+            @RequestParam(required = false, defaultValue = "FACEBOOK") SocialPlatform platform,
+            @RequestParam(required = false, defaultValue = "xlsx") String format) {
+        boolean csv = "csv".equalsIgnoreCase(format);
+        byte[] body = postService.template(platform, format);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION,
                         ContentDisposition.attachment()
-                                .filename(platform.name().toLowerCase() + "-posts-template.xlsx")
+                                .filename(platform.name().toLowerCase() + "-posts-template." + (csv ? "csv" : "xlsx"))
                                 .build()
                                 .toString())
-                .contentType(MediaType.parseMediaType(XLSX))
+                .contentType(MediaType.parseMediaType(csv ? CSV : XLSX))
                 .body(body);
     }
 
     @PostMapping(path = "/bulk-upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @Operation(summary = "Upload a filled template; imports valid rows as DRAFT posts")
+    @Operation(summary = "Upload a filled CSV or XLSX template; imports valid rows as DRAFT posts")
     public ApiResponse<BulkUploadResult> bulkUpload(
             @RequestParam SocialPlatform platform,
             @RequestParam("file") MultipartFile file) {

@@ -14,4 +14,7 @@ public interface MediaAssetRepository
 
     Optional<MediaAsset> findByOrganizationIdAndUserIdAndChecksumSha256AndFileSize(
             Long organizationId, Long userId, String checksumSha256, Long fileSize);
+
+    Optional<MediaAsset> findByOrganizationIdAndUserIdAndGoogleDriveFileId(
+            Long organizationId, Long userId, String googleDriveFileId);
 }

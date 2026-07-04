@@ -63,8 +63,17 @@ public final class PostDtos {
             Long mediaAssetId,
             Long productId) {}
 
-    /** Outcome of a bulk upload: how many imported + per-row errors. */
-    public record BulkUploadResult(int importedCount, List<RowError> errors) {}
+    /** Outcome of a bulk upload: how many imported + per-row errors + downloadable report. */
+    public record BulkUploadResult(
+            int importedCount,
+            List<RowError> errors,
+            String errorReportCsv,
+            String errorReportFileName) {}
 
-    public record RowError(int row, String message) {}
+    public record RowError(
+            int row,
+            String message,
+            String postTitle,
+            String pageId,
+            String mediaReference) {}
 }

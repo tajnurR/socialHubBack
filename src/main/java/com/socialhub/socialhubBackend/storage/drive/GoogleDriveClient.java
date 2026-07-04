@@ -121,8 +121,22 @@ public class GoogleDriveClient {
     }
 
     public DriveFile uploadFile(String accessToken, MultipartFile file) {
+        try {
+            String filename = file.getOriginalFilename() == null || file.getOriginalFilename().isBlank()
+                    ? "socialhub-media"
+                    : file.getOriginalFilename();
+            String contentType = file.getContentType() == null || file.getContentType().isBlank()
+                    ? MediaType.APPLICATION_OCTET_STREAM_VALUE
+                    : file.getContentType();
+            return uploadFile(accessToken, filename, contentType, file.getBytes());
+        } catch (IOException ex) {
+            throw new BusinessException("Could not read the media file for Google Drive upload.");
+        }
+    }
+
+    public DriveFile uploadFile(String accessToken, String filename, String contentType, byte[] bytes) {
         String boundary = "socialhub-drive-" + Instant.now().toEpochMilli();
-        byte[] body = multipartRelatedBody(file, boundary);
+        byte[] body = multipartRelatedBody(filename, contentType, bytes, boundary);
         URI uri = UriComponentsBuilder.fromUriString(properties.uploadBaseUrl())
                 .path("/files")
                 .queryParam("uploadType", "multipart")
@@ -138,6 +152,20 @@ public class GoogleDriveClient {
                         .retrieve()
                         .body(DriveFile.class),
                 "upload media to Google Drive");
+    }
+
+    public DriveFile getFile(String accessToken, String fileId) {
+        URI uri = UriComponentsBuilder.fromUriString(properties.driveBaseUrl())
+                .path("/files/{fileId}")
+                .queryParam("fields", "id,name,mimeType,webViewLink,webContentLink,thumbnailLink,size,createdTime")
+                .build(fileId);
+        return call(
+                () -> client.get()
+                        .uri(uri)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .retrieve()
+                        .body(DriveFile.class),
+                "read Google Drive file metadata");
     }
 
     public DownloadedFile downloadFile(String accessToken, String fileId) {
@@ -174,14 +202,8 @@ public class GoogleDriveClient {
                 "delete media from Google Drive");
     }
 
-    private byte[] multipartRelatedBody(MultipartFile file, String boundary) {
+    private byte[] multipartRelatedBody(String filename, String contentType, byte[] fileBytes, String boundary) {
         try {
-            String filename = file.getOriginalFilename() == null || file.getOriginalFilename().isBlank()
-                    ? "socialhub-media"
-                    : file.getOriginalFilename();
-            String contentType = file.getContentType() == null || file.getContentType().isBlank()
-                    ? MediaType.APPLICATION_OCTET_STREAM_VALUE
-                    : file.getContentType();
             String metadataJson = objectMapper.writeValueAsString(new UploadMetadata(filename));
             byte[] metadata = (
                     "--" + boundary + "\r\n"
@@ -191,7 +213,6 @@ public class GoogleDriveClient {
                             + "Content-Type: " + contentType + "\r\n\r\n")
                     .getBytes(StandardCharsets.UTF_8);
             byte[] closing = ("\r\n--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8);
-            byte[] fileBytes = file.getBytes();
             byte[] body = new byte[metadata.length + fileBytes.length + closing.length];
             System.arraycopy(metadata, 0, body, 0, metadata.length);
             System.arraycopy(fileBytes, 0, body, metadata.length, fileBytes.length);

@@ -18,15 +18,21 @@ import com.socialhub.socialhubBackend.user.context.CurrentUserProvider;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
@@ -36,6 +42,7 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.util.UriComponentsBuilder;
 
 @Service
 public class MediaService {
@@ -49,11 +56,16 @@ public class MediaService {
             "googleDriveUrl",
             "uploadStatus",
             "createdAt");
+    private static final Duration EXTERNAL_MEDIA_TIMEOUT = Duration.ofSeconds(20);
 
     private final MediaAssetRepository mediaRepository;
     private final PostRepository postRepository;
     private final GoogleDriveService googleDriveService;
     private final CurrentUserProvider currentUserProvider;
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .connectTimeout(EXTERNAL_MEDIA_TIMEOUT)
+            .build();
 
     public MediaService(
             MediaAssetRepository mediaRepository,
@@ -97,6 +109,27 @@ public class MediaService {
         }
         int progress = files.length == 0 ? 0 : (int) Math.round((uploaded + failed) * 100.0 / files.length);
         return new MediaBulkUploadResult(files.length, uploaded, failed, duplicate, progress, items);
+    }
+
+    public MediaItemResponse importExternalMedia(String sourceUrl, MediaType expectedType) {
+        CurrentUser user = currentUserProvider.currentUser();
+        ImportedBinaryMedia downloaded = downloadExternalMedia(sourceUrl, expectedType);
+        return createOrReuseMedia(user, downloaded, null);
+    }
+
+    public MediaItemResponse attachGoogleDriveMedia(String googleDriveUrl) {
+        CurrentUser user = currentUserProvider.currentUser();
+        String fileId = extractGoogleDriveFileId(googleDriveUrl);
+        DriveFile driveFile = googleDriveService.getMediaFile(fileId);
+        MediaAsset existing = mediaRepository
+                .findByOrganizationIdAndUserIdAndGoogleDriveFileId(
+                        user.organizationId(), user.userId(), fileId)
+                .orElse(null);
+        if (existing != null) {
+            return toResponse(existing);
+        }
+        ImportedBinaryMedia downloaded = downloadDriveMedia(googleDriveUrl, fileId, driveFile);
+        return createOrReuseMedia(user, downloaded, driveFile);
     }
 
     public MediaItemResponse retry(Long id, MultipartFile file) {
@@ -178,9 +211,65 @@ public class MediaService {
         }
     }
 
+    private MediaItemResponse createOrReuseMedia(
+            CurrentUser user,
+            ImportedBinaryMedia imported,
+            DriveFile existingDriveFile) {
+        MediaAsset duplicate = mediaRepository
+                .findByOrganizationIdAndUserIdAndChecksumSha256AndFileSize(
+                        user.organizationId(), user.userId(), imported.checksum(), imported.fileSize())
+                .orElse(null);
+        if (duplicate != null) {
+            return toResponse(duplicate);
+        }
+
+        MediaAsset asset = new MediaAsset();
+        asset.setOrganizationId(user.organizationId());
+        asset.setUserId(user.userId());
+        asset.setFileName(imported.fileName());
+        asset.setOriginalFileName(imported.originalFileName());
+        asset.setMediaType(imported.mediaType());
+        asset.setContentType(imported.contentType());
+        asset.setExtension(imported.extension());
+        asset.setFileSize(imported.fileSize());
+        asset.setChecksumSha256(imported.checksum());
+
+        if (existingDriveFile != null) {
+            asset.setGoogleDriveFileId(existingDriveFile.id());
+            asset.setGoogleDriveUrl(existingDriveFile.webViewLink());
+            asset.setDirectDownloadUrl(existingDriveFile.webContentLink());
+            asset.setThumbnailUrl(existingDriveFile.thumbnailLink());
+            asset.setUploadStatus(MediaUploadStatus.UPLOADED);
+            asset.setErrorMessage(null);
+            return toResponse(mediaRepository.save(asset));
+        }
+
+        asset.setUploadStatus(MediaUploadStatus.UPLOADING);
+        mediaRepository.saveAndFlush(asset);
+        uploadToDrive(asset, imported);
+        return toResponse(asset);
+    }
+
     private void uploadToDrive(MediaAsset asset, MultipartFile file) {
         try {
             DriveFile driveFile = googleDriveService.uploadMediaFile(file);
+            asset.setGoogleDriveFileId(driveFile.id());
+            asset.setGoogleDriveUrl(driveFile.webViewLink());
+            asset.setDirectDownloadUrl(driveFile.webContentLink());
+            asset.setThumbnailUrl(driveFile.thumbnailLink());
+            asset.setUploadStatus(MediaUploadStatus.UPLOADED);
+            asset.setErrorMessage(null);
+        } catch (BusinessException ex) {
+            asset.setUploadStatus(MediaUploadStatus.FAILED);
+            asset.setErrorMessage(truncate(ex.getMessage(), 1000));
+        }
+        mediaRepository.save(asset);
+    }
+
+    private void uploadToDrive(MediaAsset asset, ImportedBinaryMedia imported) {
+        try {
+            DriveFile driveFile = googleDriveService.uploadMediaBytes(
+                    imported.fileName(), imported.contentType(), imported.bytes());
             asset.setGoogleDriveFileId(driveFile.id());
             asset.setGoogleDriveUrl(driveFile.webViewLink());
             asset.setDirectDownloadUrl(driveFile.webContentLink());
@@ -234,6 +323,16 @@ public class MediaService {
         }
     }
 
+    private String checksum(byte[] bytes) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update(bytes);
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 is not available", ex);
+        }
+    }
+
     private String originalFilename(MultipartFile file) {
         String name = file == null ? null : file.getOriginalFilename();
         if (name == null || name.isBlank()) {
@@ -248,6 +347,32 @@ public class MediaService {
             throw new BusinessException("Unsupported media file. Add a valid file extension.");
         }
         return filename.substring(dot + 1).toLowerCase(Locale.ROOT);
+    }
+
+    private String resolveExtension(String filename, String contentType, MediaType mediaType) {
+        String normalized = filename == null ? "" : filename.trim();
+        if (!normalized.isBlank()) {
+            int dot = normalized.lastIndexOf('.');
+            if (dot >= 0 && dot < normalized.length() - 1) {
+                return normalized.substring(dot + 1).toLowerCase(Locale.ROOT);
+            }
+        }
+        return switch (mediaType) {
+            case IMAGE -> switch (contentType.toLowerCase(Locale.ROOT)) {
+                case "image/jpeg" -> "jpg";
+                case "image/png" -> "png";
+                case "image/webp" -> "webp";
+                case "image/gif" -> "gif";
+                default -> throw new BusinessException("Unsupported image content type: " + contentType);
+            };
+            case VIDEO -> switch (contentType.toLowerCase(Locale.ROOT)) {
+                case "video/mp4" -> "mp4";
+                case "video/quicktime" -> "mov";
+                case "video/x-msvideo", "video/avi" -> "avi";
+                case "video/webm" -> "webm";
+                default -> throw new BusinessException("Unsupported video content type: " + contentType);
+            };
+        };
     }
 
     private MediaType mediaType(String extension) {
@@ -393,6 +518,166 @@ public class MediaService {
         return value.substring(0, max);
     }
 
+    private ImportedBinaryMedia downloadExternalMedia(String sourceUrl, MediaType expectedType) {
+        URI uri = parsePublicUri(sourceUrl);
+        HttpRequest request = HttpRequest.newBuilder(uri)
+                .timeout(EXTERNAL_MEDIA_TIMEOUT)
+                .GET()
+                .build();
+        try {
+            HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+            if (response.statusCode() < 200 || response.statusCode() >= 400) {
+                throw new BusinessException(
+                        "Media URL is broken, private, or inaccessible from the server (HTTP "
+                                + response.statusCode() + ").");
+            }
+            String contentType = response.headers().firstValue("content-type")
+                    .map(value -> value.split(";")[0].trim().toLowerCase(Locale.ROOT))
+                    .orElseThrow(() -> new BusinessException("Media URL did not return a content type."));
+            MediaType actualType = mediaTypeFromContentType(contentType)
+                    .orElseThrow(() -> new BusinessException("Unsupported media type at " + sourceUrl));
+            if (expectedType != null && expectedType != actualType) {
+                throw new BusinessException("Media URL type does not match the provided column.");
+            }
+            byte[] body = response.body() == null ? new byte[0] : response.body();
+            if (body.length == 0) {
+                throw new BusinessException("Media URL returned an empty file.");
+            }
+            String fileName = filenameFromUri(uri, contentType, actualType);
+            return new ImportedBinaryMedia(
+                    fileName,
+                    fileName,
+                    resolveExtension(fileName, contentType, actualType),
+                    contentType,
+                    actualType,
+                    (long) body.length,
+                    checksum(body),
+                    body);
+        } catch (IOException ex) {
+            throw new BusinessException("Could not download media from " + sourceUrl + ".");
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException("Media download was interrupted for " + sourceUrl + ".");
+        }
+    }
+
+    private ImportedBinaryMedia downloadDriveMedia(String driveUrl, String fileId, DriveFile driveFile) {
+        String mimeType = Optional.ofNullable(driveFile.mimeType())
+                .map(value -> value.toLowerCase(Locale.ROOT))
+                .orElseThrow(() -> new BusinessException("Google Drive file has no media type."));
+        MediaType mediaType = mediaTypeFromContentType(mimeType)
+                .orElseThrow(() -> new BusinessException("Unsupported Google Drive media type: " + mimeType));
+        DownloadedFile downloaded = googleDriveService.downloadMediaFile(fileId);
+        byte[] body = downloaded.body() == null ? new byte[0] : downloaded.body();
+        if (body.length == 0) {
+            throw new BusinessException("Google Drive file is empty or inaccessible: " + driveUrl);
+        }
+        String fileName = filenameFromDrive(driveFile.name(), mimeType, mediaType);
+        long size = parseLong(driveFile.size()).orElse((long) body.length);
+        return new ImportedBinaryMedia(
+                fileName,
+                fileName,
+                resolveExtension(fileName, mimeType, mediaType),
+                mimeType,
+                mediaType,
+                size,
+                checksum(body),
+                body);
+    }
+
+    private URI parsePublicUri(String url) {
+        URI uri;
+        try {
+            uri = URI.create(url.trim());
+        } catch (IllegalArgumentException ex) {
+            throw new BusinessException("Media URL is not a valid URL.");
+        }
+        String scheme = uri.getScheme();
+        if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+            throw new BusinessException("Media URL must be a public http or https URL.");
+        }
+        if (uri.getHost() == null || uri.getHost().isBlank()) {
+            throw new BusinessException("Media URL must include a public host.");
+        }
+        return uri;
+    }
+
+    private Optional<MediaType> mediaTypeFromContentType(String contentType) {
+        String normalized = contentType == null ? "" : contentType.toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "image/jpeg", "image/png", "image/webp", "image/gif" -> Optional.of(MediaType.IMAGE);
+            case "video/mp4", "video/quicktime", "video/x-msvideo", "video/avi", "video/webm" ->
+                    Optional.of(MediaType.VIDEO);
+            default -> Optional.empty();
+        };
+    }
+
+    private String filenameFromUri(URI uri, String contentType, MediaType mediaType) {
+        String path = Optional.ofNullable(uri.getPath()).orElse("");
+        String candidate = path.substring(path.lastIndexOf('/') + 1).trim();
+        if (candidate.isBlank()) {
+            return filenameFromDrive("imported-media", contentType, mediaType);
+        }
+        if (candidate.contains("?")) {
+            candidate = candidate.substring(0, candidate.indexOf('?'));
+        }
+        String extension = resolveExtension(candidate, contentType, mediaType);
+        return ensureExtension(candidate.isBlank() ? "imported-media" : candidate, extension);
+    }
+
+    private String filenameFromDrive(String driveName, String contentType, MediaType mediaType) {
+        String base = driveName == null || driveName.isBlank() ? "google-drive-media" : driveName.trim();
+        String extension = resolveExtension(base, contentType, mediaType);
+        return ensureExtension(base, extension);
+    }
+
+    private String ensureExtension(String fileName, String extension) {
+        if (fileName.toLowerCase(Locale.ROOT).endsWith("." + extension.toLowerCase(Locale.ROOT))) {
+            return fileName;
+        }
+        return fileName + "." + extension;
+    }
+
+    private String extractGoogleDriveFileId(String googleDriveUrl) {
+        URI uri;
+        try {
+            uri = URI.create(googleDriveUrl.trim());
+        } catch (IllegalArgumentException ex) {
+            throw new BusinessException("Google Drive URL is not a valid URL.");
+        }
+        String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
+        if (!host.contains("drive.google.com")) {
+            throw new BusinessException("Google Drive URL must point to drive.google.com.");
+        }
+        List<String> pathSegments = UriComponentsBuilder.fromUri(uri).build().getPathSegments();
+        for (int i = 0; i < pathSegments.size() - 1; i++) {
+            if ("d".equals(pathSegments.get(i)) && !pathSegments.get(i + 1).isBlank()) {
+                return pathSegments.get(i + 1);
+            }
+        }
+        String query = uri.getQuery();
+        if (query != null) {
+            for (String pair : query.split("&")) {
+                int idx = pair.indexOf('=');
+                if (idx > 0 && "id".equals(pair.substring(0, idx)) && idx < pair.length() - 1) {
+                    return pair.substring(idx + 1);
+                }
+            }
+        }
+        throw new BusinessException("Could not extract a Google Drive file ID from the provided URL.");
+    }
+
+    private Optional<Long> parseLong(String value) {
+        if (value == null || value.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(Long.parseLong(value));
+        } catch (NumberFormatException ex) {
+            return Optional.empty();
+        }
+    }
+
     private record FileInfo(
             String fileName,
             String extension,
@@ -400,6 +685,16 @@ public class MediaService {
             MediaType mediaType,
             Long size,
             String checksum) {}
+
+    private record ImportedBinaryMedia(
+            String fileName,
+            String originalFileName,
+            String extension,
+            String contentType,
+            MediaType mediaType,
+            Long fileSize,
+            String checksum,
+            byte[] bytes) {}
 
     public record DownloadedMedia(String fileName, String contentType, byte[] body) {}
 }

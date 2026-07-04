@@ -7,7 +7,9 @@ import com.socialhub.socialhubBackend.integration.core.domain.SocialIntegration;
 import com.socialhub.socialhubBackend.integration.core.repository.SocialIntegrationRepository;
 import com.socialhub.socialhubBackend.media.domain.MediaAsset;
 import com.socialhub.socialhubBackend.media.domain.MediaType;
+import com.socialhub.socialhubBackend.media.dto.MediaDtos.MediaItemResponse;
 import com.socialhub.socialhubBackend.media.repository.MediaAssetRepository;
+import com.socialhub.socialhubBackend.media.service.MediaService;
 import com.socialhub.socialhubBackend.post.domain.Post;
 import com.socialhub.socialhubBackend.post.domain.PostMediaType;
 import com.socialhub.socialhubBackend.post.domain.PostStatus;
@@ -27,6 +29,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,6 +51,7 @@ public class PostService {
     private final ScheduleEventRepository scheduleEventRepository;
     private final SocialIntegrationRepository integrationRepository;
     private final MediaAssetRepository mediaAssetRepository;
+    private final MediaService mediaService;
     private final PostExcelService excelService;
     private final MediaUrlValidator mediaUrlValidator;
     private final PostPublisher postPublisher;
@@ -60,6 +64,7 @@ public class PostService {
             ScheduleEventRepository scheduleEventRepository,
             SocialIntegrationRepository integrationRepository,
             MediaAssetRepository mediaAssetRepository,
+            MediaService mediaService,
             PostExcelService excelService,
             MediaUrlValidator mediaUrlValidator,
             PostPublisher postPublisher,
@@ -70,6 +75,7 @@ public class PostService {
         this.scheduleEventRepository = scheduleEventRepository;
         this.integrationRepository = integrationRepository;
         this.mediaAssetRepository = mediaAssetRepository;
+        this.mediaService = mediaService;
         this.excelService = excelService;
         this.mediaUrlValidator = mediaUrlValidator;
         this.postPublisher = postPublisher;
@@ -77,8 +83,8 @@ public class PostService {
         this.currentUserProvider = currentUserProvider;
     }
 
-    public byte[] template(SocialPlatform platform) {
-        return excelService.generateTemplate(platform == null ? SocialPlatform.FACEBOOK : platform);
+    public byte[] template(SocialPlatform platform, String format) {
+        return excelService.generateTemplate(platform == null ? SocialPlatform.FACEBOOK : platform, format);
     }
 
     public List<PostResponse> list(
@@ -160,7 +166,7 @@ public class PostService {
 
         List<RawRow> rows;
         try (InputStream in = file.getInputStream()) {
-            rows = excelService.parse(in);
+            rows = excelService.parse(in, file.getOriginalFilename());
         } catch (IOException ex) {
             throw new BusinessException("Could not read the uploaded file.");
         }
@@ -171,11 +177,16 @@ public class PostService {
             try {
                 toImport.add(buildPost(row, user, selectedPlatform, accountsByIdentifier, productIdByName, productIdBySku));
             } catch (RowValidationException ex) {
-                errors.add(new RowError(row.rowNumber(), ex.getMessage()));
+                errors.add(rowError(row, ex.getMessage()));
             }
         }
         postRepository.saveAll(toImport);
-        return new BulkUploadResult(toImport.size(), errors);
+        String errorReportCsv = errors.isEmpty() ? null : errorReportCsv(errors);
+        return new BulkUploadResult(
+                toImport.size(),
+                errors,
+                errorReportCsv,
+                errors.isEmpty() ? null : "bulk-upload-errors-" + Instant.now().toEpochMilli() + ".csv");
     }
 
     @Transactional
@@ -267,7 +278,7 @@ public class PostService {
             throw new RowValidationException("Unknown product: " + row.product());
         }
 
-        MediaSelection media = mediaSelection(row.imageUrl(), row.videoUrl());
+        AppliedMedia media = resolveBulkMedia(row);
 
         Post post = new Post();
         post.setOrganizationId(user.organizationId());
@@ -277,8 +288,9 @@ public class PostService {
         post.setTitle(row.postTitle());
         post.setContent(row.postContent());
         post.setLink(row.link().isBlank() ? null : row.link());
-        post.setMediaUrl(media.url());
-        post.setMediaType(media.type());
+        post.setMediaAssetId(media.mediaAssetId());
+        post.setMediaUrl(media.mediaUrl());
+        post.setMediaType(media.mediaType());
         post.setProductId(productId);
         post.setScheduledAt(null);
         post.setStatus(PostStatus.DRAFT);
@@ -382,6 +394,40 @@ public class PostService {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
+    private AppliedMedia resolveBulkMedia(RawRow row) {
+        String image = blankToNull(row.imageUrl());
+        String video = blankToNull(row.videoUrl());
+        String googleDriveUrl = blankToNull(row.googleDriveUrl());
+        long references = List.of(image, video, googleDriveUrl).stream().filter(value -> value != null).count();
+        if (references > 1) {
+            throw new RowValidationException("Use only one media reference: imageUrl, videoUrl, or googleDriveUrl.");
+        }
+        if (googleDriveUrl != null) {
+            MediaItemResponse media = mediaService.attachGoogleDriveMedia(googleDriveUrl);
+            ensureUploaded(media, "Google Drive media");
+            return toAppliedMedia(media);
+        }
+        if (image != null) {
+            PostMediaType type = validateMediaRow(image);
+            if (type != PostMediaType.IMAGE) {
+                throw new RowValidationException("imageUrl must point to a supported image.");
+            }
+            MediaItemResponse media = mediaService.importExternalMedia(image, MediaType.IMAGE);
+            ensureUploaded(media, "Imported image");
+            return toAppliedMedia(media);
+        }
+        if (video != null) {
+            PostMediaType type = validateMediaRow(video);
+            if (type != PostMediaType.VIDEO) {
+                throw new RowValidationException("videoUrl must point to a supported video.");
+            }
+            MediaItemResponse media = mediaService.importExternalMedia(video, MediaType.VIDEO);
+            ensureUploaded(media, "Imported video");
+            return toAppliedMedia(media);
+        }
+        return new AppliedMedia(null, null, null);
+    }
+
     private AppliedMedia resolveMedia(Post post, Long mediaAssetId, String mediaUrl) {
         if (mediaAssetId != null) {
             MediaAsset asset = mediaAssetRepository
@@ -413,29 +459,6 @@ public class PostService {
         };
     }
 
-    private MediaSelection mediaSelection(String imageUrl, String videoUrl) {
-        String image = blankToNull(imageUrl);
-        String video = blankToNull(videoUrl);
-        if (image != null && video != null) {
-            throw new RowValidationException("Use either imageUrl or videoUrl, not both.");
-        }
-        if (image != null) {
-            PostMediaType type = validateMediaRow(image);
-            if (type != PostMediaType.IMAGE) {
-                throw new RowValidationException("imageUrl must point to a supported image.");
-            }
-            return new MediaSelection(image, type);
-        }
-        if (video != null) {
-            PostMediaType type = validateMediaRow(video);
-            if (type != PostMediaType.VIDEO) {
-                throw new RowValidationException("videoUrl must point to a supported video.");
-            }
-            return new MediaSelection(video, type);
-        }
-        return new MediaSelection(null, null);
-    }
-
     private PostMediaType validateMediaRow(String url) {
         try {
             return mediaUrlValidator.validate(url);
@@ -455,9 +478,60 @@ public class PostService {
         return value == null ? "" : value.trim().toLowerCase();
     }
 
-    private record MediaSelection(String url, PostMediaType type) {}
-
     private record AppliedMedia(Long mediaAssetId, String mediaUrl, PostMediaType mediaType) {}
+
+    private AppliedMedia toAppliedMedia(MediaItemResponse media) {
+        PostMediaType mediaType = switch (media.mediaType()) {
+            case IMAGE -> PostMediaType.IMAGE;
+            case VIDEO -> PostMediaType.VIDEO;
+        };
+        String resolvedUrl = media.directDownloadUrl() != null && !media.directDownloadUrl().isBlank()
+                ? media.directDownloadUrl()
+                : media.googleDriveUrl();
+        return new AppliedMedia(media.mediaId(), resolvedUrl, mediaType);
+    }
+
+    private void ensureUploaded(MediaItemResponse media, String label) {
+        if (media.uploadStatus() != com.socialhub.socialhubBackend.media.domain.MediaUploadStatus.UPLOADED) {
+            throw new RowValidationException(label + " is not uploaded and ready to attach.");
+        }
+    }
+
+    private RowError rowError(RawRow row, String message) {
+        return new RowError(
+                row.rowNumber(),
+                message,
+                blankToNull(row.postTitle()),
+                blankToNull(row.pageId()),
+                firstMediaReference(row));
+    }
+
+    private String firstMediaReference(RawRow row) {
+        return List.of(blankToNull(row.googleDriveUrl()), blankToNull(row.imageUrl()), blankToNull(row.videoUrl()))
+                .stream()
+                .filter(value -> value != null)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private String errorReportCsv(List<RowError> errors) {
+        StringBuilder out = new StringBuilder();
+        out.append("row,message,postTitle,pageId,mediaReference\n");
+        errors.stream()
+                .sorted(Comparator.comparingInt(RowError::row))
+                .forEach(error -> out.append(csv(error.row()))
+                        .append(',').append(csv(error.message()))
+                        .append(',').append(csv(error.postTitle()))
+                        .append(',').append(csv(error.pageId()))
+                        .append(',').append(csv(error.mediaReference()))
+                        .append('\n'));
+        return out.toString();
+    }
+
+    private String csv(Object value) {
+        String text = value == null ? "" : String.valueOf(value);
+        return "\"" + text.replace("\"", "\"\"") + "\"";
+    }
 
     /** Internal: a single row failed validation (carried as a per-row error). */
     private static final class RowValidationException extends RuntimeException {

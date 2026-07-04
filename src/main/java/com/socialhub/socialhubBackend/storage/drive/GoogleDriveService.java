@@ -180,6 +180,19 @@ public class GoogleDriveService {
         return uploaded;
     }
 
+    @Transactional
+    public DriveFile uploadMediaBytes(String filename, String contentType, byte[] bytes) {
+        DriveFile uploaded = withAccessToken(token -> client.uploadFile(token, filename, contentType, bytes));
+        GoogleDriveIntegration integration = ownedConnected();
+        integration.setLastSyncAt(Instant.now());
+        repository.save(integration);
+        return uploaded;
+    }
+
+    public DriveFile getMediaFile(String googleDriveFileId) {
+        return withAccessToken(token -> client.getFile(token, googleDriveFileId));
+    }
+
     public DownloadedFile downloadMediaFile(String googleDriveFileId) {
         return withAccessToken(token -> client.downloadFile(token, googleDriveFileId));
     }

@@ -5,7 +5,10 @@ import com.socialhub.socialhubBackend.integration.core.SocialPlatform;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.BufferedReader;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -30,7 +33,7 @@ public class PostExcelService {
 
     /** Column headers (order matters for the template; lookup on upload is by name). */
     public static final List<String> COLUMNS =
-            List.of("postContent", "product", "postTitle", "pageId", "imageUrl", "videoUrl", "productSku", "link");
+            List.of("postContent", "product", "postTitle", "pageId", "productSku", "link", "imageUrl", "videoUrl", "googleDriveUrl");
 
     /** A parsed-but-unvalidated row (1-based {@code rowNumber} as shown in Excel). */
     public record RawRow(
@@ -39,19 +42,27 @@ public class PostExcelService {
             String product,
             String postTitle,
             String pageId,
+            String productSku,
+            String link,
             String imageUrl,
             String videoUrl,
-            String productSku,
-            String link) {
+            String googleDriveUrl) {
 
         public boolean isBlank() {
             return postContent.isBlank() && product.isBlank() && postTitle.isBlank()
-                    && pageId.isBlank() && imageUrl.isBlank() && videoUrl.isBlank()
-                    && productSku.isBlank() && link.isBlank();
+                    && pageId.isBlank() && productSku.isBlank() && link.isBlank()
+                    && imageUrl.isBlank() && videoUrl.isBlank() && googleDriveUrl.isBlank();
         }
     }
 
-    public byte[] generateTemplate(SocialPlatform platform) {
+    public byte[] generateTemplate(SocialPlatform platform, String format) {
+        if ("csv".equalsIgnoreCase(format)) {
+            return generateCsvTemplate(platform);
+        }
+        return generateXlsxTemplate(platform);
+    }
+
+    private byte[] generateXlsxTemplate(SocialPlatform platform) {
         try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             Sheet sheet = workbook.createSheet("Posts");
 
@@ -74,16 +85,34 @@ public class PostExcelService {
             example.createCell(1).setCellValue("Pro Plan");
             example.createCell(2).setCellValue("Launch announcement");
             example.createCell(3).setCellValue("1234567890   (your " + accountLabel(platform) + " ID or name)");
-            example.createCell(4).setCellValue("https://example.com/photo.jpg   (optional)");
-            example.createCell(5).setCellValue("");
-            example.createCell(6).setCellValue("SKU-PRO   (optional)");
-            example.createCell(7).setCellValue("https://example.com   (optional)");
+            example.createCell(4).setCellValue("SKU-PRO   (optional)");
+            example.createCell(5).setCellValue("https://example.com   (optional)");
+            example.createCell(6).setCellValue("https://example.com/photo.jpg   (optional)");
+            example.createCell(7).setCellValue("");
+            example.createCell(8).setCellValue("");
 
             workbook.write(out);
             return out.toByteArray();
         } catch (IOException ex) {
             throw new BusinessException("Failed to generate the template");
         }
+    }
+
+    private byte[] generateCsvTemplate(SocialPlatform platform) {
+        List<String> example = List.of(
+                exampleMessage(platform),
+                "Pro Plan",
+                "Launch announcement",
+                "1234567890",
+                "SKU-PRO",
+                "https://example.com",
+                "https://example.com/photo.jpg",
+                "",
+                "");
+        StringBuilder out = new StringBuilder();
+        out.append(String.join(",", COLUMNS)).append('\n');
+        out.append(example.stream().map(this::csv).reduce((a, b) -> a + "," + b).orElse("")).append('\n');
+        return out.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     private String exampleMessage(SocialPlatform platform) {
@@ -104,7 +133,14 @@ public class PostExcelService {
         };
     }
 
-    public List<RawRow> parse(InputStream inputStream) {
+    public List<RawRow> parse(InputStream inputStream, String originalFilename) {
+        if (originalFilename != null && originalFilename.toLowerCase().endsWith(".csv")) {
+            return parseCsv(inputStream);
+        }
+        return parseXlsx(inputStream);
+    }
+
+    private List<RawRow> parseXlsx(InputStream inputStream) {
         try (Workbook workbook = new XSSFWorkbook(inputStream)) {
             Sheet sheet = workbook.getSheetAt(0);
             if (sheet == null) {
@@ -134,10 +170,11 @@ public class PostExcelService {
                         value(row, columnIndex, "product"),
                         value(row, columnIndex, "postTitle"),
                         value(row, columnIndex, "pageId"),
+                        value(row, columnIndex, "productSku"),
+                        value(row, columnIndex, "link"),
                         value(row, columnIndex, "imageUrl"),
                         value(row, columnIndex, "videoUrl"),
-                        value(row, columnIndex, "productSku"),
-                        value(row, columnIndex, "link"));
+                        value(row, columnIndex, "googleDriveUrl"));
                 if (!raw.isBlank()) {
                     rows.add(raw);
                 }
@@ -145,6 +182,46 @@ public class PostExcelService {
             return rows;
         } catch (IOException ex) {
             throw new BusinessException("Could not read the Excel file. Upload a valid .xlsx file.");
+        }
+    }
+
+    private List<RawRow> parseCsv(InputStream inputStream) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+            String headerLine = reader.readLine();
+            if (headerLine == null || headerLine.isBlank()) {
+                throw new BusinessException("The CSV file is empty — download the template first.");
+            }
+            Map<String, Integer> columnIndex = headerIndex(parseCsvLine(headerLine));
+            for (String required : List.of("postContent", "product", "postTitle", "pageId")) {
+                if (!columnIndex.containsKey(required)) {
+                    throw new BusinessException(
+                            "Missing required column '" + required + "'. Use the provided template.");
+                }
+            }
+            List<RawRow> rows = new ArrayList<>();
+            String line;
+            int rowNumber = 2;
+            while ((line = reader.readLine()) != null) {
+                List<String> cells = parseCsvLine(line);
+                RawRow raw = new RawRow(
+                        rowNumber,
+                        value(cells, columnIndex, "postContent"),
+                        value(cells, columnIndex, "product"),
+                        value(cells, columnIndex, "postTitle"),
+                        value(cells, columnIndex, "pageId"),
+                        value(cells, columnIndex, "productSku"),
+                        value(cells, columnIndex, "link"),
+                        value(cells, columnIndex, "imageUrl"),
+                        value(cells, columnIndex, "videoUrl"),
+                        value(cells, columnIndex, "googleDriveUrl"));
+                if (!raw.isBlank()) {
+                    rows.add(raw);
+                }
+                rowNumber++;
+            }
+            return rows;
+        } catch (IOException ex) {
+            throw new BusinessException("Could not read the CSV file.");
         }
     }
 
@@ -167,9 +244,61 @@ public class PostExcelService {
         return resolved;
     }
 
+    private Map<String, Integer> headerIndex(List<String> headerCells) {
+        Map<String, Integer> resolved = new HashMap<>();
+        for (int i = 0; i < headerCells.size(); i++) {
+            String name = headerCells.get(i).trim();
+            if (!name.isBlank()) {
+                for (String col : COLUMNS) {
+                    if (col.equalsIgnoreCase(name)) {
+                        resolved.put(col, i);
+                    }
+                }
+            }
+        }
+        return resolved;
+    }
+
     private String value(Row row, Map<String, Integer> columnIndex, String column) {
         Integer idx = columnIndex.get(column);
         return idx == null ? "" : cellString(row.getCell(idx)).trim();
+    }
+
+    private String value(List<String> row, Map<String, Integer> columnIndex, String column) {
+        Integer idx = columnIndex.get(column);
+        if (idx == null || idx < 0 || idx >= row.size()) {
+            return "";
+        }
+        return row.get(idx).trim();
+    }
+
+    private List<String> parseCsvLine(String line) {
+        List<String> values = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean quoted = false;
+        for (int i = 0; i < line.length(); i++) {
+            char ch = line.charAt(i);
+            if (ch == '"') {
+                if (quoted && i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                    current.append('"');
+                    i++;
+                } else {
+                    quoted = !quoted;
+                }
+            } else if (ch == ',' && !quoted) {
+                values.add(current.toString());
+                current.setLength(0);
+            } else {
+                current.append(ch);
+            }
+        }
+        values.add(current.toString());
+        return values;
+    }
+
+    private String csv(String value) {
+        String text = value == null ? "" : value;
+        return "\"" + text.replace("\"", "\"\"") + "\"";
     }
 
     private String cellString(Cell cell) {

@@ -120,4 +120,22 @@ The single-post Add Post flow now supports media-library-backed drafts:
   `googleDriveUrl`, `directDownloadUrl`, `thumbnailUrl`, and `mediaUploadStatus`.
 - Flyway migration `V14__posts_media_assets.sql` adds the post-to-media-library
   link.
+
+## Bulk Upload Media Flow
+
+Bulk post import now supports both `.xlsx` and `.csv` templates plus
+Drive-backed media attachment:
+
+- `GET /api/v1/posts/template?platform=FACEBOOK&format=xlsx|csv` downloads the
+  bulk template.
+- Template columns are: required `postContent`, `product`, `postTitle`,
+  `pageId`; optional `productSku`, `link`, `imageUrl`, `videoUrl`,
+  `googleDriveUrl`.
+- Each row may provide only one media source. Public `imageUrl` / `videoUrl`
+  values are downloaded and imported into the user's connected Google Drive
+  account as media-library assets. `googleDriveUrl` must resolve to an
+  accessible file in that same connected Drive account and is attached without a
+  duplicate upload.
+- Invalid rows are returned with row-level errors and a downloadable CSV error
+  report; valid rows are always created as `DRAFT` with `scheduledAt = null`.
 # socialHubBack
