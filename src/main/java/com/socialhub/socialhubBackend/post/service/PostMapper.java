@@ -2,6 +2,8 @@ package com.socialhub.socialhubBackend.post.service;
 
 import com.socialhub.socialhubBackend.integration.core.domain.SocialIntegration;
 import com.socialhub.socialhubBackend.integration.core.repository.SocialIntegrationRepository;
+import com.socialhub.socialhubBackend.media.domain.MediaAsset;
+import com.socialhub.socialhubBackend.media.repository.MediaAssetRepository;
 import com.socialhub.socialhubBackend.post.domain.Post;
 import com.socialhub.socialhubBackend.post.dto.PostDtos.PostResponse;
 import com.socialhub.socialhubBackend.schedule.domain.ScheduleEvent;
@@ -14,15 +16,19 @@ public class PostMapper {
 
     private final SocialIntegrationRepository integrationRepository;
     private final ScheduleEventRepository scheduleEventRepository;
+    private final MediaAssetRepository mediaAssetRepository;
 
     public PostMapper(
             SocialIntegrationRepository integrationRepository,
-            ScheduleEventRepository scheduleEventRepository) {
+            ScheduleEventRepository scheduleEventRepository,
+            MediaAssetRepository mediaAssetRepository) {
         this.integrationRepository = integrationRepository;
         this.scheduleEventRepository = scheduleEventRepository;
+        this.mediaAssetRepository = mediaAssetRepository;
     }
 
     public PostResponse toResponse(Post p) {
+        MediaAsset media = linkedMedia(p);
         return new PostResponse(
                 p.getId(),
                 p.getSocialIntegrationId(),
@@ -32,7 +38,13 @@ public class PostMapper {
                 p.getContent(),
                 p.getLink(),
                 p.getMediaUrl(),
+                p.getMediaAssetId(),
                 p.getMediaType(),
+                media == null ? null : media.getGoogleDriveFileId(),
+                media == null ? null : media.getGoogleDriveUrl(),
+                media == null ? null : media.getDirectDownloadUrl(),
+                media == null ? null : media.getThumbnailUrl(),
+                media == null ? null : media.getUploadStatus(),
                 p.getProductId(),
                 p.getStatus(),
                 p.getScheduledAt(),
@@ -43,6 +55,16 @@ public class PostMapper {
                 scheduleName(p),
                 p.getCreatedAt(),
                 p.getUpdatedAt());
+    }
+
+    private MediaAsset linkedMedia(Post post) {
+        if (post.getMediaAssetId() == null) {
+            return null;
+        }
+        return mediaAssetRepository
+                .findByIdAndOrganizationIdAndUserId(
+                        post.getMediaAssetId(), post.getOrganizationId(), post.getUserId())
+                .orElse(null);
     }
 
     private String targetAccountName(Post post) {

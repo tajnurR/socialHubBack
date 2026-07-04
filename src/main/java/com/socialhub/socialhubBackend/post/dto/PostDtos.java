@@ -3,6 +3,7 @@ package com.socialhub.socialhubBackend.post.dto;
 import com.socialhub.socialhubBackend.integration.core.SocialPlatform;
 import com.socialhub.socialhubBackend.post.domain.PostMediaType;
 import com.socialhub.socialhubBackend.post.domain.PostStatus;
+import com.socialhub.socialhubBackend.media.domain.MediaUploadStatus;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import java.time.Instant;
@@ -22,7 +23,13 @@ public final class PostDtos {
             String content,
             String link,
             String mediaUrl,
+            Long mediaAssetId,
             PostMediaType mediaType,
+            String googleDriveFileId,
+            String googleDriveUrl,
+            String directDownloadUrl,
+            String thumbnailUrl,
+            MediaUploadStatus mediaUploadStatus,
             Long productId,
             PostStatus status,
             Instant scheduledAt,
@@ -42,6 +49,7 @@ public final class PostDtos {
             @NotBlank String content,
             String link,
             String mediaUrl,
+            Long mediaAssetId,
             @NotNull Long productId) {}
 
     /** Editable fields of a draft. */
@@ -52,6 +60,7 @@ public final class PostDtos {
             String content,
             String link,
             String mediaUrl,
+            Long mediaAssetId,
             Long productId) {}
 
     /** Outcome of a bulk upload: how many imported + per-row errors. */

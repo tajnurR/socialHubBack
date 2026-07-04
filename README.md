@@ -80,10 +80,10 @@ Config is externalized via env vars (see `.env.example`); profiles are `dev`
    ./mvnw spring-boot:run
    ```
 3. Verify:
-   - `GET http://localhost:8080/api/v1/integrations/providers` → FACEBOOK / INSTAGRAM / WHATSAPP
-   - `GET http://localhost:8080/api/v1/organizations` → `[]`
-   - Swagger UI: `http://localhost:8080/swagger-ui.html`
-   - Health: `http://localhost:8080/actuator/health`
+   - `GET http://localhost:8081/api/v1/integrations/providers` → FACEBOOK / INSTAGRAM / WHATSAPP
+   - `GET http://localhost:8081/api/v1/organizations` → `[]`
+   - Swagger UI: `http://localhost:8081/swagger-ui.html`
+   - Health: `http://localhost:8081/actuator/health`
 
 Build / test: `./mvnw clean package` (tests run against in-memory H2 via the
 `test` profile, so no Postgres is needed to build).
@@ -104,4 +104,20 @@ Build / test: `./mvnw clean package` (tests run against in-memory H2 via the
 
 Integration requests are organization-scoped (via `X-Organization-Id` for now;
 see SSO note). Access tokens are encrypted at rest and never returned.
+
+## Add Post Media Flow
+
+The single-post Add Post flow now supports media-library-backed drafts:
+
+- `POST /api/v1/posts` accepts an optional `mediaAssetId` in addition to the
+  existing `mediaUrl`.
+- When `mediaAssetId` is supplied, the backend verifies ownership of the
+  referenced `media_assets` row, links it through `posts.media_asset_id`, and
+  mirrors the resolved Drive URL and media type onto the post for publish-time
+  compatibility.
+- `GET /api/v1/posts` and `GET /api/v1/posts/{id}` now return the linked media
+  metadata needed by the UI: `mediaAssetId`, `googleDriveFileId`,
+  `googleDriveUrl`, `directDownloadUrl`, `thumbnailUrl`, and `mediaUploadStatus`.
+- Flyway migration `V14__posts_media_assets.sql` adds the post-to-media-library
+  link.
 # socialHubBack

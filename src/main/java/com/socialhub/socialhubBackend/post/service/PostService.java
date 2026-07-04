@@ -5,6 +5,9 @@ import com.socialhub.socialhubBackend.common.exception.ResourceNotFoundException
 import com.socialhub.socialhubBackend.integration.core.SocialPlatform;
 import com.socialhub.socialhubBackend.integration.core.domain.SocialIntegration;
 import com.socialhub.socialhubBackend.integration.core.repository.SocialIntegrationRepository;
+import com.socialhub.socialhubBackend.media.domain.MediaAsset;
+import com.socialhub.socialhubBackend.media.domain.MediaType;
+import com.socialhub.socialhubBackend.media.repository.MediaAssetRepository;
 import com.socialhub.socialhubBackend.post.domain.Post;
 import com.socialhub.socialhubBackend.post.domain.PostMediaType;
 import com.socialhub.socialhubBackend.post.domain.PostStatus;
@@ -44,6 +47,7 @@ public class PostService {
     private final ProductRepository productRepository;
     private final ScheduleEventRepository scheduleEventRepository;
     private final SocialIntegrationRepository integrationRepository;
+    private final MediaAssetRepository mediaAssetRepository;
     private final PostExcelService excelService;
     private final MediaUrlValidator mediaUrlValidator;
     private final PostPublisher postPublisher;
@@ -55,6 +59,7 @@ public class PostService {
             ProductRepository productRepository,
             ScheduleEventRepository scheduleEventRepository,
             SocialIntegrationRepository integrationRepository,
+            MediaAssetRepository mediaAssetRepository,
             PostExcelService excelService,
             MediaUrlValidator mediaUrlValidator,
             PostPublisher postPublisher,
@@ -64,6 +69,7 @@ public class PostService {
         this.productRepository = productRepository;
         this.scheduleEventRepository = scheduleEventRepository;
         this.integrationRepository = integrationRepository;
+        this.mediaAssetRepository = mediaAssetRepository;
         this.excelService = excelService;
         this.mediaUrlValidator = mediaUrlValidator;
         this.postPublisher = postPublisher;
@@ -116,7 +122,7 @@ public class PostService {
         post.setOrganizationId(user.organizationId());
         post.setUserId(user.userId());
         post.setPlatform(platform);
-        applyEditable(post, request.title(), request.content(), request.link(), request.mediaUrl(),
+        applyEditable(post, request.title(), request.content(), request.link(), request.mediaUrl(), request.mediaAssetId(),
                 request.productId(), request.socialIntegrationId(), null,
                 PostStatus.DRAFT, null, platform);
         return postMapper.toResponse(postRepository.save(post));
@@ -180,7 +186,7 @@ public class PostService {
         }
         SocialPlatform platform = request.platform() == null ? post.getPlatform() : request.platform();
         post.setPlatform(platform);
-        applyEditable(post, request.title(), request.content(), request.link(), request.mediaUrl(),
+        applyEditable(post, request.title(), request.content(), request.link(), request.mediaUrl(), request.mediaAssetId(),
                 request.productId(), request.socialIntegrationId(), post.getScheduleEventId(),
                 post.getStatus(), post.getScheduledAt(), platform);
         return postMapper.toResponse(postRepository.save(post));
@@ -285,6 +291,7 @@ public class PostService {
             String content,
             String link,
             String mediaUrl,
+            Long mediaAssetId,
             Long productId,
             Long socialIntegrationId,
             Long scheduleEventId,
@@ -297,9 +304,10 @@ public class PostService {
         }
         post.setContent(requiredContent(content));
         post.setLink(blankToNull(link));
-        String resolvedMediaUrl = blankToNull(mediaUrl);
-        post.setMediaUrl(resolvedMediaUrl);
-        post.setMediaType(mediaUrlValidator.validate(resolvedMediaUrl));
+        AppliedMedia appliedMedia = resolveMedia(post, mediaAssetId, mediaUrl);
+        post.setMediaAssetId(appliedMedia.mediaAssetId());
+        post.setMediaUrl(appliedMedia.mediaUrl());
+        post.setMediaType(appliedMedia.mediaType());
         if (productId == null) {
             throw new BusinessException("Product is required.");
         }
@@ -374,6 +382,37 @@ public class PostService {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
+    private AppliedMedia resolveMedia(Post post, Long mediaAssetId, String mediaUrl) {
+        if (mediaAssetId != null) {
+            MediaAsset asset = mediaAssetRepository
+                    .findByIdAndOrganizationIdAndUserId(mediaAssetId, post.getOrganizationId(), post.getUserId())
+                    .orElseThrow(() -> new BusinessException("Selected media is not in your library."));
+            return new AppliedMedia(asset.getId(), preferredMediaUrl(asset), toPostMediaType(asset.getMediaType()));
+        }
+        String resolvedMediaUrl = blankToNull(mediaUrl);
+        return new AppliedMedia(null, resolvedMediaUrl, mediaUrlValidator.validate(resolvedMediaUrl));
+    }
+
+    private String preferredMediaUrl(MediaAsset asset) {
+        if (asset.getDirectDownloadUrl() != null && !asset.getDirectDownloadUrl().isBlank()) {
+            return asset.getDirectDownloadUrl();
+        }
+        if (asset.getGoogleDriveUrl() != null && !asset.getGoogleDriveUrl().isBlank()) {
+            return asset.getGoogleDriveUrl();
+        }
+        return null;
+    }
+
+    private PostMediaType toPostMediaType(MediaType mediaType) {
+        if (mediaType == null) {
+            return null;
+        }
+        return switch (mediaType) {
+            case IMAGE -> PostMediaType.IMAGE;
+            case VIDEO -> PostMediaType.VIDEO;
+        };
+    }
+
     private MediaSelection mediaSelection(String imageUrl, String videoUrl) {
         String image = blankToNull(imageUrl);
         String video = blankToNull(videoUrl);
@@ -417,6 +456,8 @@ public class PostService {
     }
 
     private record MediaSelection(String url, PostMediaType type) {}
+
+    private record AppliedMedia(Long mediaAssetId, String mediaUrl, PostMediaType mediaType) {}
 
     /** Internal: a single row failed validation (carried as a per-row error). */
     private static final class RowValidationException extends RuntimeException {

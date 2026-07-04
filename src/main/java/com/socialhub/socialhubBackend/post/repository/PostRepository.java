@@ -5,6 +5,7 @@ import com.socialhub.socialhubBackend.post.domain.PostStatus;
 import jakarta.persistence.LockModeType;
 import jakarta.persistence.QueryHint;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Pageable;
@@ -26,10 +27,20 @@ public interface PostRepository extends JpaRepository<Post, Long>, JpaSpecificat
     List<Post> findByOrganizationIdAndUserIdAndScheduleEventIdOrderByScheduledAtAsc(
             Long organizationId, Long userId, Long scheduleEventId);
 
-    long countByOrganizationIdAndUserIdAndMediaUrlIn(Long organizationId, Long userId, List<String> mediaUrls);
-
     List<Post> findByOrganizationIdAndUserIdAndScheduleEventIdOrderBySortOrderAscScheduledAtAsc(
             Long organizationId, Long userId, Long scheduleEventId);
+
+    @Query("""
+            select count(distinct p.id) from Post p
+            where p.organizationId = :organizationId
+              and p.userId = :userId
+              and (p.mediaAssetId = :mediaAssetId or p.mediaUrl in :mediaUrls)
+            """)
+    long countRelatedToMedia(
+            @Param("organizationId") Long organizationId,
+            @Param("userId") Long userId,
+            @Param("mediaAssetId") Long mediaAssetId,
+            @Param("mediaUrls") Collection<String> mediaUrls);
 
     /**
      * Claims a batch of due scheduled posts for publishing. {@code PESSIMISTIC_WRITE}

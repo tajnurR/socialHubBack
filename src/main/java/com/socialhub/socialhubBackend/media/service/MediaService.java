@@ -304,10 +304,10 @@ public class MediaService {
             urls.add(asset.getDirectDownloadUrl());
         }
         if (urls.isEmpty()) {
-            return 0;
+            urls.add("__socialhub_no_media_url__");
         }
-        return postRepository.countByOrganizationIdAndUserIdAndMediaUrlIn(
-                asset.getOrganizationId(), asset.getUserId(), urls);
+        return postRepository.countRelatedToMedia(
+                asset.getOrganizationId(), asset.getUserId(), asset.getId(), urls);
     }
 
     private Specification<MediaAsset> mediaSpecification(CurrentUser user, String filter) {

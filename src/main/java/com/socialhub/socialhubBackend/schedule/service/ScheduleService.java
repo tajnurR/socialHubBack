@@ -721,6 +721,8 @@ public class ScheduleService {
         target.setTitle(source.getTitle());
         target.setLink(source.getLink());
         target.setMediaUrl(source.getMediaUrl());
+        target.setMediaAssetId(source.getMediaAssetId());
+        target.setMediaType(source.getMediaType());
         target.setProductId(source.getProductId());
         target.setScheduledAt(source.getScheduledAt());
         target.setHashtags(source.getHashtags());
