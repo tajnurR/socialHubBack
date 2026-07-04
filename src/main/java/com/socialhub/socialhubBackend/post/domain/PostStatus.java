@@ -3,6 +3,8 @@ package com.socialhub.socialhubBackend.post.domain;
 /** Lifecycle of a post: imported/created → scheduled → published (or failed). */
 public enum PostStatus {
     DRAFT,
+    PENDING,
+    PROCESSING,
     SCHEDULED,
     POSTED,
     NOT_POSTED,

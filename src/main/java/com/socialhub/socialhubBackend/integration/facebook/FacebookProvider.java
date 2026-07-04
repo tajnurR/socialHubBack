@@ -122,14 +122,41 @@ public class FacebookProvider extends AbstractSocialMediaProvider {
         if (command.mediaType() == null) {
             response = graphClient.createFeedPost(
                     externalAccountId, accessToken, command.message(), command.link(), null);
+            return new ProviderPostRef(response.id(), "Facebook feed post created: " + response.id());
         } else if (command.mediaType() == com.socialhub.socialhubBackend.post.domain.PostMediaType.IMAGE) {
-            response = graphClient.createPhotoPost(
-                    externalAccountId, accessToken, command.mediaUrl(), command.message(), null);
+            response = hasBinaryMedia(command)
+                    ? graphClient.createPhotoPostUpload(
+                            externalAccountId,
+                            accessToken,
+                            command.mediaFilename(),
+                            command.mediaContentType(),
+                            command.mediaBytes(),
+                            command.message(),
+                            null)
+                    : graphClient.createPhotoPost(
+                            externalAccountId, accessToken, command.mediaUrl(), command.message(), null);
+            return new ProviderPostRef(response.id(), "Facebook photo post created: " + response.id());
         } else {
-            response = graphClient.createVideoPost(
-                    externalAccountId, accessToken, command.mediaUrl(), command.message(), null);
+            response = hasBinaryMedia(command)
+                    ? graphClient.createVideoPostUpload(
+                            externalAccountId,
+                            accessToken,
+                            command.mediaFilename(),
+                            command.mediaContentType(),
+                            command.mediaBytes(),
+                            command.message(),
+                            null)
+                    : graphClient.createVideoPost(
+                            externalAccountId, accessToken, command.mediaUrl(), command.message(), null);
+            return new ProviderPostRef(response.id(), "Facebook video post created: " + response.id());
         }
-        return new ProviderPostRef(response.id());
+    }
+
+    private boolean hasBinaryMedia(CreatePostCommand command) {
+        return command.mediaBytes() != null
+                && command.mediaBytes().length > 0
+                && command.mediaFilename() != null
+                && !command.mediaFilename().isBlank();
     }
 
     private Instant parseTime(String value) {

@@ -91,9 +91,15 @@ public class Post extends TenantBaseEntity {
     @Column(name = "published_at")
     private Instant publishedAt;
 
+    @Column(name = "publish_response_summary", length = 1000)
+    private String publishResponseSummary;
+
     @Column(name = "error_message", length = 1000)
     private String errorMessage;
 
     @Column(name = "retry_count", nullable = false)
     private int retryCount = 0;
+
+    @Column(name = "last_retry_at")
+    private Instant lastRetryAt;
 }

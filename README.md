@@ -138,4 +138,30 @@ Drive-backed media attachment:
   duplicate upload.
 - Invalid rows are returned with row-level errors and a downloadable CSV error
   report; valid rows are always created as `DRAFT` with `scheduledAt = null`.
+
+## Scheduled Native Publishing
+
+Scheduled Facebook publishing now uses a safer worker flow and uploads actual
+media bytes instead of publishing Google Drive links:
+
+- Scheduling a draft saves `scheduledAt`, keeps the selected Facebook page on
+  the post, and moves status to `PENDING`.
+- The scheduler runs every minute (`SCHEDULED_PUBLISHER_POLL_INTERVAL_MS`,
+  default `60000`) and claims due posts where `scheduledAt <= now` and status
+  is `PENDING`.
+- Claimed posts move to `PROCESSING` before any Facebook API call, which keeps
+  restart-safe state in the database and prevents duplicate scheduler claims.
+- Text-only posts publish to `/{page-id}/feed`.
+- Image posts download the Drive file through the user's connected Google Drive
+  account and upload it natively to `/{page-id}/photos`.
+- Video posts download the Drive file through the user's connected Google Drive
+  account and upload it natively to `/{page-id}/videos`.
+- The caption/message/description always comes from `Post.content`. Drive URLs
+  are not pushed into the Facebook caption or link fields for media posts.
+- Publishing results stored on `posts` include `external_post_id`,
+  `published_at`, `publish_response_summary`, `error_message`, `retry_count`,
+  and `last_retry_at`.
+- Temporary publish failures are re-queued automatically with backoff
+  (`10m * retryCount`, max 3 retries). Failed posts can also be retried
+  immediately through `POST /api/v1/posts/{id}/retry`.
 # socialHubBack

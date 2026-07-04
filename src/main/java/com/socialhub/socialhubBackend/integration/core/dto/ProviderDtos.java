@@ -24,7 +24,14 @@ public final class ProviderDtos {
             SocialPlatform platform, String externalAccountId, String displayName, String accessToken) {}
 
     /** Command to create a post. Media posts publish natively when media fields are present. */
-    public record CreatePostCommand(String message, String link, String mediaUrl, PostMediaType mediaType) {}
+    public record CreatePostCommand(
+            String message,
+            String link,
+            String mediaUrl,
+            PostMediaType mediaType,
+            String mediaFilename,
+            String mediaContentType,
+            byte[] mediaBytes) {}
 
     /** A post as represented by the external platform, with engagement counts. */
     public record ProviderPost(
@@ -39,5 +46,5 @@ public final class ProviderDtos {
             long reactionCount) {}
 
     /** Reference to a newly created post. */
-    public record ProviderPostRef(String externalPostId) {}
+    public record ProviderPostRef(String externalPostId, String responseSummary) {}
 }

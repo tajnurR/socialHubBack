@@ -193,8 +193,16 @@ public class GoogleDriveService {
         return withAccessToken(token -> client.getFile(token, googleDriveFileId));
     }
 
+    public DriveFile getMediaFile(Long organizationId, Long userId, String googleDriveFileId) {
+        return withAccessToken(organizationId, userId, token -> client.getFile(token, googleDriveFileId));
+    }
+
     public DownloadedFile downloadMediaFile(String googleDriveFileId) {
         return withAccessToken(token -> client.downloadFile(token, googleDriveFileId));
+    }
+
+    public DownloadedFile downloadMediaFile(Long organizationId, Long userId, String googleDriveFileId) {
+        return withAccessToken(organizationId, userId, token -> client.downloadFile(token, googleDriveFileId));
     }
 
     @Transactional
@@ -221,7 +229,12 @@ public class GoogleDriveService {
     }
 
     private <T> T withAccessToken(Function<String, T> action) {
-        GoogleDriveIntegration integration = ownedConnected();
+        CurrentUser user = currentUser();
+        return withAccessToken(user.organizationId(), user.userId(), action);
+    }
+
+    private <T> T withAccessToken(Long organizationId, Long userId, Function<String, T> action) {
+        GoogleDriveIntegration integration = ownedConnected(organizationId, userId);
         String accessToken = validAccessToken(integration);
         try {
             return action.apply(accessToken);
@@ -253,7 +266,8 @@ public class GoogleDriveService {
         }
         try {
             String refreshToken = encryptionService.decrypt(integration.getRefreshToken());
-            GoogleDriveAppCredentials credentials = credentialService.resolve(integration.getAppCredentialId());
+            GoogleDriveAppCredentials credentials = credentialService.resolve(
+                    integration.getOrganizationId(), integration.getUserId(), integration.getAppCredentialId());
             TokenResponse refreshed = client.refreshAccessToken(
                     refreshToken, credentials.clientId(), credentials.clientSecret());
             integration.setAccessToken(encryptionService.encrypt(refreshed.accessToken()));
@@ -277,8 +291,13 @@ public class GoogleDriveService {
     }
 
     private GoogleDriveIntegration ownedConnected() {
+        CurrentUser user = currentUser();
+        return ownedConnected(user.organizationId(), user.userId());
+    }
+
+    private GoogleDriveIntegration ownedConnected(Long organizationId, Long userId) {
         GoogleDriveIntegration integration = repository
-                .findByOrganizationIdAndUserId(currentUser().organizationId(), currentUser().userId())
+                .findByOrganizationIdAndUserId(organizationId, userId)
                 .orElseThrow(() -> new BusinessException(
                         "Connect Google Drive before uploading media.", HttpStatus.BAD_REQUEST));
         if (integration.getStatus() != DriveConnectionStatus.CONNECTED

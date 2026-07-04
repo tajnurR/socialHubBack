@@ -23,6 +23,22 @@ public interface PostRepository extends JpaRepository<Post, Long>, JpaSpecificat
     /** Ownership-checked by-id lookup. */
     Optional<Post> findByIdAndOrganizationIdAndUserId(Long id, Long organizationId, Long userId);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select p from Post p
+            where p.id = :id
+              and p.organizationId = :organizationId
+              and p.userId = :userId
+            """)
+    Optional<Post> findByIdAndOrganizationIdAndUserIdForUpdate(
+            @Param("id") Long id,
+            @Param("organizationId") Long organizationId,
+            @Param("userId") Long userId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select p from Post p where p.id = :id")
+    Optional<Post> findByIdForUpdate(@Param("id") Long id);
+
     /** Posts belonging to a schedule event (user-scoped). */
     List<Post> findByOrganizationIdAndUserIdAndScheduleEventIdOrderByScheduledAtAsc(
             Long organizationId, Long userId, Long scheduleEventId);
@@ -51,7 +67,7 @@ public interface PostRepository extends JpaRepository<Post, Long>, JpaSpecificat
     @QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "-2"))
     @Query("""
             select p from Post p
-            where p.status = com.socialhub.socialhubBackend.post.domain.PostStatus.SCHEDULED
+            where p.status = com.socialhub.socialhubBackend.post.domain.PostStatus.PENDING
               and p.scheduledAt <= :now
             order by p.scheduledAt asc
             """)

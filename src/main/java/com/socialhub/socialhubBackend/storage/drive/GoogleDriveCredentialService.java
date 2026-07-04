@@ -56,11 +56,15 @@ public class GoogleDriveCredentialService {
 
     public GoogleDriveAppCredentials resolve(Long configId) {
         CurrentUser user = currentUserProvider.currentUser();
+        return resolve(user.organizationId(), user.userId(), configId);
+    }
+
+    public GoogleDriveAppCredentials resolve(Long organizationId, Long userId, Long configId) {
         GoogleDriveAppCredential credential = configId == null
-                ? repository.findFirstByOrganizationIdAndUserIdOrderByIdAsc(user.organizationId(), user.userId())
+                ? repository.findFirstByOrganizationIdAndUserIdOrderByIdAsc(organizationId, userId)
                         .orElseThrow(() -> new BusinessException(
                                 "Add your Google Drive OAuth client credentials before connecting."))
-                : repository.findByIdAndOrganizationIdAndUserId(configId, user.organizationId(), user.userId())
+                : repository.findByIdAndOrganizationIdAndUserId(configId, organizationId, userId)
                         .orElseThrow(() -> new BusinessException(
                                 "Google Drive app configuration not found: " + configId));
         return new GoogleDriveAppCredentials(

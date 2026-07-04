@@ -19,7 +19,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.NestedExceptionUtils;
+import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -260,6 +262,28 @@ public class FacebookGraphClient {
                 "create Facebook photo post");
     }
 
+    /** POST /{page-id}/photos — publish a native photo post from uploaded bytes. */
+    public CreateResponse createPhotoPostUpload(
+            String pageId,
+            String accessToken,
+            String filename,
+            String contentType,
+            byte[] bytes,
+            String caption,
+            String apiVersion) {
+        String path = FacebookGraphApi.PAGE_PHOTOS.path(resolveVersion(apiVersion), Map.of("pageId", pageId));
+        MultiValueMap<String, Object> form = multipartMediaForm(filename, contentType, bytes, caption, "caption");
+        return call(
+                () -> client.post()
+                        .uri(uri -> uri.path(path).build())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.MULTIPART_FORM_DATA)
+                        .body(form)
+                        .retrieve()
+                        .body(CreateResponse.class),
+                "create Facebook photo post");
+    }
+
     /** POST /{page-id}/videos — publish a native video post from a public URL. */
     public CreateResponse createVideoPost(
             String pageId, String accessToken, String videoUrl, String description, String apiVersion) {
@@ -280,6 +304,28 @@ public class FacebookGraphClient {
                 "create Facebook video post");
     }
 
+    /** POST /{page-id}/videos — publish a native video post from uploaded bytes. */
+    public CreateResponse createVideoPostUpload(
+            String pageId,
+            String accessToken,
+            String filename,
+            String contentType,
+            byte[] bytes,
+            String description,
+            String apiVersion) {
+        String path = FacebookGraphApi.PAGE_VIDEOS.path(resolveVersion(apiVersion), Map.of("pageId", pageId));
+        MultiValueMap<String, Object> form = multipartMediaForm(filename, contentType, bytes, description, "description");
+        return call(
+                () -> client.post()
+                        .uri(uri -> uri.path(path).build())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.MULTIPART_FORM_DATA)
+                        .body(form)
+                        .retrieve()
+                        .body(CreateResponse.class),
+                "create Facebook video post");
+    }
+
     /** Per-config override if provided, else the global default version. */
     private String resolveVersion(String apiVersion) {
         return apiVersion != null && !apiVersion.isBlank() ? apiVersion : properties.apiVersion();
@@ -287,6 +333,20 @@ public class FacebookGraphClient {
 
     private String bearer(String accessToken) {
         return "Bearer " + accessToken;
+    }
+
+    private MultiValueMap<String, Object> multipartMediaForm(
+            String filename, String contentType, byte[] bytes, String message, String messageField) {
+        MultiValueMap<String, Object> form = new LinkedMultiValueMap<>();
+        HttpHeaders fileHeaders = new HttpHeaders();
+        fileHeaders.setContentType(contentType == null || contentType.isBlank()
+                ? MediaType.APPLICATION_OCTET_STREAM
+                : MediaType.parseMediaType(contentType));
+        form.add("source", new HttpEntity<>(new NamedByteArrayResource(bytes, filename), fileHeaders));
+        if (message != null && !message.isBlank()) {
+            form.add(messageField, message);
+        }
+        return form;
     }
 
     private <T> T call(Supplier<T> request, String action) {
@@ -321,6 +381,21 @@ public class FacebookGraphClient {
                     "Failed to process Facebook's response while trying to " + action
                             + ". Please try again.",
                     HttpStatus.BAD_GATEWAY);
+        }
+    }
+
+    private static final class NamedByteArrayResource extends ByteArrayResource {
+
+        private final String filename;
+
+        private NamedByteArrayResource(byte[] byteArray, String filename) {
+            super(byteArray == null ? new byte[0] : byteArray);
+            this.filename = filename == null || filename.isBlank() ? "media.bin" : filename;
+        }
+
+        @Override
+        public String getFilename() {
+            return filename;
         }
     }
 

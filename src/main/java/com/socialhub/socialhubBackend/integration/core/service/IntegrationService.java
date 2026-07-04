@@ -153,7 +153,7 @@ public class IntegrationService {
             var ref = provider.createPost(
                     integration.getExternalAccountId(),
                     token,
-                    new CreatePostCommand(request.message(), request.link(), null, null));
+                    new CreatePostCommand(request.message(), request.link(), null, null, null, null, null));
             return new CreatePostResponse(ref.externalPostId());
         } catch (ProviderAuthException ex) {
             statusUpdater.markReauthRequired(integration.getId());

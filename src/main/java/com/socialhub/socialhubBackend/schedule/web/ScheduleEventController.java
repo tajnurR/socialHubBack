@@ -41,7 +41,7 @@ public class ScheduleEventController {
     }
 
     @PostMapping("/{id}/posts")
-    @Operation(summary = "Attach posts and apply the schedule (sets them SCHEDULED)")
+    @Operation(summary = "Attach posts and apply the schedule (sets them PENDING)")
     public ApiResponse<ScheduleEventResponse> attachPosts(
             @PathVariable Long id, @Valid @RequestBody AttachPostsRequest request) {
         return ApiResponse.ok(scheduleService.attachPosts(id, request), "Posts scheduled");

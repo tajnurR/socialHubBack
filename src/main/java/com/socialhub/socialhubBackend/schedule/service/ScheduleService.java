@@ -36,7 +36,8 @@ import com.socialhub.socialhubBackend.user.context.CurrentUserProvider;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
+import java.time.DateTimeException;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -178,8 +179,10 @@ public class ScheduleService {
         boolean resume = "paused".equalsIgnoreCase(event.getStatus());
         event.setStatus(resume ? "active" : "paused");
         for (Post post : postsFor(event)) {
-            if (post.getStatus() == PostStatus.SCHEDULED || post.getStatus() == PostStatus.PAUSED) {
-                post.setStatus(resume ? PostStatus.SCHEDULED : PostStatus.PAUSED);
+            if (post.getStatus() == PostStatus.PENDING
+                    || post.getStatus() == PostStatus.SCHEDULED
+                    || post.getStatus() == PostStatus.PAUSED) {
+                post.setStatus(resume ? PostStatus.PENDING : PostStatus.PAUSED);
                 postRepository.save(post);
             }
         }
@@ -193,20 +196,21 @@ public class ScheduleService {
         String action = request.action() != null ? request.action().trim().toLowerCase() : "";
         switch (action) {
             case "tonight" -> {
-                post.setScheduledAt(todayAt(LocalTime.of(20, 0)));
-                post.setStatus(PostStatus.SCHEDULED);
+                post.setScheduledAt(todayAt(LocalTime.of(20, 0), event));
+                post.setStatus(PostStatus.PENDING);
             }
             case "tomorrow" -> {
-                post.setScheduledAt(tomorrowAt(defaultPostingTime(event)));
-                post.setStatus(PostStatus.SCHEDULED);
+                post.setScheduledAt(tomorrowAt(defaultPostingTime(event), event));
+                post.setStatus(PostStatus.PENDING);
             }
             case "best" -> {
-                post.setScheduledAt(tomorrowAt(BEST_TIMES.getOrDefault(post.getPlatform(), defaultPostingTime(event))));
-                post.setStatus(PostStatus.SCHEDULED);
+                post.setScheduledAt(tomorrowAt(
+                        BEST_TIMES.getOrDefault(post.getPlatform(), defaultPostingTime(event)), event));
+                post.setStatus(PostStatus.PENDING);
             }
             case "retry" -> {
                 post.setScheduledAt(Instant.now().plus(2, ChronoUnit.HOURS));
-                post.setStatus(PostStatus.SCHEDULED);
+                post.setStatus(PostStatus.PENDING);
                 post.setErrorMessage(null);
                 post.setRetryCount(0);
             }
@@ -222,7 +226,7 @@ public class ScheduleService {
         ScheduleEvent event = getOwnedEvent(scheduleId);
         Post post = getOwnedPostInSchedule(event, postId);
         post.setScheduledAt(request.scheduledAt());
-        post.setStatus(PostStatus.SCHEDULED);
+        post.setStatus(PostStatus.PENDING);
         postRepository.save(post);
         return toScheduleResponse(event);
     }
@@ -300,7 +304,7 @@ public class ScheduleService {
             post.setScheduledAt(computeScheduledAt(event, item, i));
             post.setScheduleEventId(event.getId());
             post.setSortOrder(i);
-            post.setStatus(PostStatus.SCHEDULED);
+            post.setStatus(PostStatus.PENDING);
             post.setErrorMessage(null);
             post.setRetryCount(0);
             postRepository.save(post);
@@ -326,7 +330,7 @@ public class ScheduleService {
         event.setNotifyFailure(notifications.failure());
         event.setNotifyNextReminder(notifications.nextPostReminder());
         event.setMode("custom".equals(request.scheduleType()) ? ScheduleMode.INTERVAL : ScheduleMode.EXPLICIT);
-        event.setStartTime(request.startDate().atTime(request.postingTime()).toInstant(ZoneOffset.UTC));
+        event.setStartTime(atEventZone(request.startDate(), request.postingTime(), event));
         event.setIntervalHours("daily".equals(request.scheduleType()) ? 24 : null);
     }
 
@@ -377,7 +381,7 @@ public class ScheduleService {
         post.setPlatform(request.platform());
         post.setScheduledAt(request.scheduledAt() != null
                 ? request.scheduledAt()
-                : event.getStartDate().atTime(event.getPostingTime()).plusDays(index).toInstant(ZoneOffset.UTC));
+                : atEventZone(event.getStartDate().plusDays(index), event.getPostingTime(), event));
         post.setMediaUrl(blankToNull(request.mediaUrl()));
         post.setMediaType(mediaUrlValidator.validate(post.getMediaUrl()));
         post.setLink(blankToNull(request.link()));
@@ -392,7 +396,7 @@ public class ScheduleService {
         }
         post.setSocialIntegrationId(request.socialIntegrationId());
         PostStatus status = effectivePostStatus(event, request);
-        if (status == PostStatus.SCHEDULED) {
+        if (status == PostStatus.PENDING || status == PostStatus.SCHEDULED) {
             if (post.getScheduledAt() == null) {
                 throw new BusinessException("Scheduled posts require a publish date and time.");
             }
@@ -407,7 +411,7 @@ public class ScheduleService {
             throw new BusinessException("Use publish-now or the scheduler to publish a post.");
         }
         post.setStatus(status);
-        if (status == PostStatus.SCHEDULED) {
+        if (status == PostStatus.PENDING || status == PostStatus.SCHEDULED) {
             post.setErrorMessage(null);
             post.setRetryCount(0);
         }
@@ -427,7 +431,7 @@ public class ScheduleService {
                     || requested == PostStatus.NOT_POSTED || requested == PostStatus.PAUSED) {
                 return requested;
             }
-            return PostStatus.SCHEDULED;
+            return PostStatus.PENDING;
         }
         return requested != null ? requested : PostStatus.DRAFT;
     }
@@ -439,12 +443,14 @@ public class ScheduleService {
         int failed = (int) posts.stream().filter(p -> p.getStatus() == PostStatus.FAILED).count();
         int pending = (int) posts.stream()
                 .filter(p -> p.getStatus() == PostStatus.DRAFT
+                        || p.getStatus() == PostStatus.PENDING
+                        || p.getStatus() == PostStatus.PROCESSING
                         || p.getStatus() == PostStatus.SCHEDULED
                         || p.getStatus() == PostStatus.NOT_POSTED
                         || p.getStatus() == PostStatus.PAUSED)
                 .count();
         Instant next = posts.stream()
-                .filter(p -> p.getStatus() == PostStatus.SCHEDULED)
+                .filter(p -> p.getStatus() == PostStatus.PENDING || p.getStatus() == PostStatus.SCHEDULED)
                 .map(Post::getScheduledAt)
                 .filter(Objects::nonNull)
                 .filter(i -> !i.isBefore(Instant.now()))
@@ -590,7 +596,9 @@ public class ScheduleService {
                         .count()
                 / posts.size()) * 25;
         int overdue = (int) posts.stream()
-                .filter(p -> p.getStatus() == PostStatus.SCHEDULED || p.getStatus() == PostStatus.NOT_POSTED)
+                .filter(p -> p.getStatus() == PostStatus.PENDING
+                        || p.getStatus() == PostStatus.SCHEDULED
+                        || p.getStatus() == PostStatus.NOT_POSTED)
                 .filter(p -> p.getScheduledAt() != null && p.getScheduledAt().isBefore(Instant.now()))
                 .count();
         int consistency = "active".equalsIgnoreCase(event.getStatus()) ? 20 : "paused".equalsIgnoreCase(event.getStatus()) ? 10 : 6;
@@ -600,7 +608,9 @@ public class ScheduleService {
     private List<String> healthSuggestions(ScheduleEvent event, List<Post> posts, int failed) {
         List<String> suggestions = new ArrayList<>();
         if (posts.stream().anyMatch(p -> p.getScheduledAt() != null && p.getScheduledAt().isBefore(Instant.now())
-                && (p.getStatus() == PostStatus.SCHEDULED || p.getStatus() == PostStatus.NOT_POSTED))) {
+                && (p.getStatus() == PostStatus.PENDING
+                        || p.getStatus() == PostStatus.SCHEDULED
+                        || p.getStatus() == PostStatus.NOT_POSTED))) {
             suggestions.add("Reschedule overdue posts.");
         }
         if (failed > 0) {
@@ -650,7 +660,10 @@ public class ScheduleService {
             Map<LocalDate, List<Post>> byDay = new HashMap<>();
             for (Post post : posts) {
                 if (post.getScheduledAt() != null) {
-                    byDay.computeIfAbsent(post.getScheduledAt().atZone(ZoneOffset.UTC).toLocalDate(), ignored -> new ArrayList<>()).add(post);
+                    byDay.computeIfAbsent(
+                                    post.getScheduledAt().atZone(zone(event)).toLocalDate(),
+                                    ignored -> new ArrayList<>())
+                            .add(post);
                 }
             }
             byDay.forEach((day, group) -> {
@@ -743,12 +756,24 @@ public class ScheduleService {
         return event.getPostingTime() != null ? event.getPostingTime() : LocalTime.of(20, 0);
     }
 
-    private Instant todayAt(LocalTime time) {
-        return LocalDate.now().atTime(time).toInstant(ZoneOffset.UTC);
+    private Instant todayAt(LocalTime time, ScheduleEvent event) {
+        return atEventZone(LocalDate.now(zone(event)), time, event);
     }
 
-    private Instant tomorrowAt(LocalTime time) {
-        return LocalDate.now().plusDays(1).atTime(time).toInstant(ZoneOffset.UTC);
+    private Instant tomorrowAt(LocalTime time, ScheduleEvent event) {
+        return atEventZone(LocalDate.now(zone(event)).plusDays(1), time, event);
+    }
+
+    private Instant atEventZone(LocalDate date, LocalTime time, ScheduleEvent event) {
+        return date.atTime(time).atZone(zone(event)).toInstant();
+    }
+
+    private ZoneId zone(ScheduleEvent event) {
+        try {
+            return ZoneId.of(blankToDefault(event.getTimezone(), "UTC"));
+        } catch (DateTimeException ex) {
+            return ZoneId.of("UTC");
+        }
     }
 
     private String toWindow(LocalTime time) {

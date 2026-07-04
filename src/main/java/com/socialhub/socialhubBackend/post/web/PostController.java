@@ -111,4 +111,10 @@ public class PostController {
     public ApiResponse<PostResponse> publish(@PathVariable Long id) {
         return ApiResponse.ok(postService.publishNow(id), "Post published");
     }
+
+    @PostMapping("/{id}/retry")
+    @Operation(summary = "Retry a failed post immediately")
+    public ApiResponse<PostResponse> retry(@PathVariable Long id) {
+        return ApiResponse.ok(postService.retryNow(id), "Post retried");
+    }
 }

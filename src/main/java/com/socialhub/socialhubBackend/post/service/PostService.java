@@ -54,7 +54,7 @@ public class PostService {
     private final MediaService mediaService;
     private final PostExcelService excelService;
     private final MediaUrlValidator mediaUrlValidator;
-    private final PostPublisher postPublisher;
+    private final PostPublishingWorkflow publishingWorkflow;
     private final PostMapper postMapper;
     private final CurrentUserProvider currentUserProvider;
 
@@ -67,7 +67,7 @@ public class PostService {
             MediaService mediaService,
             PostExcelService excelService,
             MediaUrlValidator mediaUrlValidator,
-            PostPublisher postPublisher,
+            PostPublishingWorkflow publishingWorkflow,
             PostMapper postMapper,
             CurrentUserProvider currentUserProvider) {
         this.postRepository = postRepository;
@@ -78,7 +78,7 @@ public class PostService {
         this.mediaService = mediaService;
         this.excelService = excelService;
         this.mediaUrlValidator = mediaUrlValidator;
-        this.postPublisher = postPublisher;
+        this.publishingWorkflow = publishingWorkflow;
         this.postMapper = postMapper;
         this.currentUserProvider = currentUserProvider;
     }
@@ -195,6 +195,9 @@ public class PostService {
         if (post.getStatus() == PostStatus.POSTED) {
             throw new BusinessException("A published post can't be edited.");
         }
+        if (post.getStatus() == PostStatus.PROCESSING) {
+            throw new BusinessException("A post being published can't be edited.");
+        }
         SocialPlatform platform = request.platform() == null ? post.getPlatform() : request.platform();
         post.setPlatform(platform);
         applyEditable(post, request.title(), request.content(), request.link(), request.mediaUrl(), request.mediaAssetId(),
@@ -210,19 +213,18 @@ public class PostService {
 
     @Transactional
     public PostResponse publishNow(Long id) {
-        Post post = getOwned(id);
-        if (post.getStatus() == PostStatus.POSTED) {
-            throw new BusinessException("This post is already published.");
-        }
-        if (post.getSocialIntegrationId() == null) {
-            throw new BusinessException("Select a target page/account before publishing.");
-        }
-        postPublisher.publish(post);
-        postRepository.save(post);
+        CurrentUser user = currentUserProvider.currentUser();
+        Post post = publishingWorkflow.publishNow(id, user.organizationId(), user.userId());
         if (post.getStatus() == PostStatus.FAILED) {
             throw new BusinessException(post.getErrorMessage(), HttpStatus.BAD_GATEWAY);
         }
         return postMapper.toResponse(post);
+    }
+
+    @Transactional
+    public PostResponse retryNow(Long id) {
+        CurrentUser user = currentUserProvider.currentUser();
+        return postMapper.toResponse(publishingWorkflow.retryNow(id, user.organizationId(), user.userId()));
     }
 
     /** Ownership-checked fetch (404 if not the current user's). */
@@ -331,14 +333,22 @@ public class PostService {
         if (status == PostStatus.POSTED) {
             throw new BusinessException("Use publish-now to publish a post.");
         }
-        if (status == PostStatus.SCHEDULED && scheduledAt == null) {
+        if ((status == PostStatus.SCHEDULED || status == PostStatus.PENDING) && scheduledAt == null) {
             throw new BusinessException("Scheduled posts require a publish date and time.");
         }
         post.setStatus(status);
         if (status != PostStatus.FAILED) {
             post.setErrorMessage(null);
         }
-        post.setRetryCount(0);
+        if (status == PostStatus.DRAFT) {
+            post.setPublishResponseSummary(null);
+            post.setPublishedAt(null);
+            post.setExternalPostId(null);
+        }
+        if (status != PostStatus.PENDING && status != PostStatus.PROCESSING) {
+            post.setRetryCount(0);
+            post.setLastRetryAt(null);
+        }
     }
 
     private Long resolveProductId(Long productId, Post post) {
