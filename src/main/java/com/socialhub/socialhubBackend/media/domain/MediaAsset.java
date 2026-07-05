@@ -40,6 +40,9 @@ public class MediaAsset extends TenantBaseEntity {
     @Column(name = "checksum_sha256", nullable = false, length = 64)
     private String checksumSha256;
 
+    @Column(name = "folder_id")
+    private Long folderId;
+
     @Column(name = "google_drive_file_id", length = 255)
     private String googleDriveFileId;
 

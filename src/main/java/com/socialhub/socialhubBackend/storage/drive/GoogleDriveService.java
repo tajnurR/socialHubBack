@@ -181,12 +181,45 @@ public class GoogleDriveService {
     }
 
     @Transactional
-    public DriveFile uploadMediaBytes(String filename, String contentType, byte[] bytes) {
-        DriveFile uploaded = withAccessToken(token -> client.uploadFile(token, filename, contentType, bytes));
+    public DriveFile uploadMediaFile(MultipartFile file, String parentFolderId) {
+        DriveFile uploaded = withAccessToken(token -> client.uploadFile(
+                token,
+                file.getOriginalFilename() == null || file.getOriginalFilename().isBlank()
+                        ? "socialhub-media"
+                        : file.getOriginalFilename(),
+                file.getContentType() == null || file.getContentType().isBlank()
+                        ? org.springframework.http.MediaType.APPLICATION_OCTET_STREAM_VALUE
+                        : file.getContentType(),
+                toBytes(file),
+                parentFolderId));
         GoogleDriveIntegration integration = ownedConnected();
         integration.setLastSyncAt(Instant.now());
         repository.save(integration);
         return uploaded;
+    }
+
+    @Transactional
+    public DriveFile uploadMediaBytes(String filename, String contentType, byte[] bytes) {
+        return uploadMediaBytes(filename, contentType, bytes, null);
+    }
+
+    @Transactional
+    public DriveFile uploadMediaBytes(String filename, String contentType, byte[] bytes, String parentFolderId) {
+        DriveFile uploaded = withAccessToken(token -> client.uploadFile(
+                token, filename, contentType, bytes, parentFolderId));
+        GoogleDriveIntegration integration = ownedConnected();
+        integration.setLastSyncAt(Instant.now());
+        repository.save(integration);
+        return uploaded;
+    }
+
+    @Transactional
+    public DriveFile createFolder(String name) {
+        DriveFile folder = withAccessToken(token -> client.createFolder(token, name));
+        GoogleDriveIntegration integration = ownedConnected();
+        integration.setLastSyncAt(Instant.now());
+        repository.save(integration);
+        return folder;
     }
 
     public DriveFile getMediaFile(String googleDriveFileId) {
@@ -383,5 +416,13 @@ public class GoogleDriveService {
 
     private CurrentUser currentUser() {
         return currentUserProvider.currentUser();
+    }
+
+    private byte[] toBytes(MultipartFile file) {
+        try {
+            return file.getBytes();
+        } catch (java.io.IOException ex) {
+            throw new BusinessException("Could not read the media file for Google Drive upload.");
+        }
     }
 }

@@ -1,12 +1,15 @@
 package com.socialhub.socialhubBackend.media.web;
 
 import com.socialhub.socialhubBackend.common.response.ApiResponse;
+import com.socialhub.socialhubBackend.media.dto.MediaDtos.CreateMediaFolderRequest;
 import com.socialhub.socialhubBackend.media.dto.MediaDtos.MediaBulkUploadResult;
+import com.socialhub.socialhubBackend.media.dto.MediaDtos.MediaFolderResponse;
 import com.socialhub.socialhubBackend.media.dto.MediaDtos.MediaItemResponse;
 import com.socialhub.socialhubBackend.media.service.MediaService;
 import com.socialhub.socialhubBackend.media.service.MediaService.DownloadedMedia;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.springframework.http.ContentDisposition;
@@ -17,6 +20,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
@@ -36,14 +40,30 @@ public class MediaController {
 
     @GetMapping
     @Operation(summary = "List the current user's media library")
-    public ApiResponse<List<MediaItemResponse>> list(@RequestParam(defaultValue = "ALL") String filter) {
-        return ApiResponse.ok(service.list(filter));
+    public ApiResponse<List<MediaItemResponse>> list(
+            @RequestParam(defaultValue = "ALL") String filter,
+            @RequestParam(required = false) Long folderId) {
+        return ApiResponse.ok(service.list(filter, folderId));
+    }
+
+    @GetMapping("/folders")
+    @Operation(summary = "List the current user's media folders")
+    public ApiResponse<List<MediaFolderResponse>> folders() {
+        return ApiResponse.ok(service.folders());
+    }
+
+    @PostMapping("/folders")
+    @Operation(summary = "Create a media folder and matching Google Drive folder")
+    public ApiResponse<MediaFolderResponse> createFolder(@Valid @RequestBody CreateMediaFolderRequest request) {
+        return ApiResponse.ok(service.createFolder(request), "Media folder created");
     }
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(summary = "Upload one or more media files to Google Drive and save metadata")
-    public ApiResponse<MediaBulkUploadResult> upload(@RequestPart("files") MultipartFile[] files) {
-        return ApiResponse.ok(service.upload(files), "Media upload processed");
+    public ApiResponse<MediaBulkUploadResult> upload(
+            @RequestPart("files") MultipartFile[] files,
+            @RequestParam(required = false) Long folderId) {
+        return ApiResponse.ok(service.upload(files, folderId), "Media upload processed");
     }
 
     @PostMapping(value = "/{id}/retry", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -73,9 +93,11 @@ public class MediaController {
 
     @GetMapping("/export")
     @Operation(summary = "Export uploaded media URLs as CSV or XLSX")
-    public ResponseEntity<byte[]> export(@RequestParam(defaultValue = "csv") String format) {
+    public ResponseEntity<byte[]> export(
+            @RequestParam(defaultValue = "csv") String format,
+            @RequestParam(required = false) Long folderId) {
         boolean xlsx = "xlsx".equalsIgnoreCase(format);
-        byte[] body = service.export(xlsx ? "xlsx" : "csv");
+        byte[] body = service.export(xlsx ? "xlsx" : "csv", folderId);
         String filename = xlsx ? "media-library.xlsx" : "media-library.csv";
         MediaType contentType = xlsx
                 ? MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

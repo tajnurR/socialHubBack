@@ -107,7 +107,7 @@ public class GoogleDriveClient {
         URI uri = UriComponentsBuilder.fromUriString(properties.driveBaseUrl())
                 .path("/files")
                 .queryParam("pageSize", 50)
-                .queryParam("fields", "files(id,name,mimeType,webViewLink,webContentLink,thumbnailLink,size,createdTime)")
+                .queryParam("fields", "files(id,name,mimeType,webViewLink,webContentLink,thumbnailLink,size,createdTime,parents)")
                 .queryParam("orderBy", "createdTime desc")
                 .build()
                 .toUri();
@@ -128,19 +128,24 @@ public class GoogleDriveClient {
             String contentType = file.getContentType() == null || file.getContentType().isBlank()
                     ? MediaType.APPLICATION_OCTET_STREAM_VALUE
                     : file.getContentType();
-            return uploadFile(accessToken, filename, contentType, file.getBytes());
+            return uploadFile(accessToken, filename, contentType, file.getBytes(), null);
         } catch (IOException ex) {
             throw new BusinessException("Could not read the media file for Google Drive upload.");
         }
     }
 
     public DriveFile uploadFile(String accessToken, String filename, String contentType, byte[] bytes) {
+        return uploadFile(accessToken, filename, contentType, bytes, null);
+    }
+
+    public DriveFile uploadFile(
+            String accessToken, String filename, String contentType, byte[] bytes, String parentFolderId) {
         String boundary = "socialhub-drive-" + Instant.now().toEpochMilli();
-        byte[] body = multipartRelatedBody(filename, contentType, bytes, boundary);
+        byte[] body = multipartRelatedBody(filename, contentType, bytes, boundary, parentFolderId);
         URI uri = UriComponentsBuilder.fromUriString(properties.uploadBaseUrl())
                 .path("/files")
                 .queryParam("uploadType", "multipart")
-                .queryParam("fields", "id,name,mimeType,webViewLink,webContentLink,thumbnailLink,size,createdTime")
+                .queryParam("fields", "id,name,mimeType,webViewLink,webContentLink,thumbnailLink,size,createdTime,parents")
                 .build()
                 .toUri();
         return call(
@@ -152,6 +157,31 @@ public class GoogleDriveClient {
                         .retrieve()
                         .body(DriveFile.class),
                 "upload media to Google Drive");
+    }
+
+    public DriveFile createFolder(String accessToken, String name) {
+        return createFolder(accessToken, name, null);
+    }
+
+    public DriveFile createFolder(String accessToken, String name, String parentFolderId) {
+        URI uri = UriComponentsBuilder.fromUriString(properties.driveBaseUrl())
+                .path("/files")
+                .queryParam("fields", "id,name,mimeType,webViewLink,webContentLink,thumbnailLink,size,createdTime,parents")
+                .build()
+                .toUri();
+        CreateFileMetadata metadata = new CreateFileMetadata(
+                name,
+                "application/vnd.google-apps.folder",
+                parentFolderId == null || parentFolderId.isBlank() ? null : List.of(parentFolderId));
+        return call(
+                () -> client.post()
+                        .uri(uri)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(metadata)
+                        .retrieve()
+                        .body(DriveFile.class),
+                "create Google Drive folder");
     }
 
     public DriveFile getFile(String accessToken, String fileId) {
@@ -202,9 +232,12 @@ public class GoogleDriveClient {
                 "delete media from Google Drive");
     }
 
-    private byte[] multipartRelatedBody(String filename, String contentType, byte[] fileBytes, String boundary) {
+    private byte[] multipartRelatedBody(
+            String filename, String contentType, byte[] fileBytes, String boundary, String parentFolderId) {
         try {
-            String metadataJson = objectMapper.writeValueAsString(new UploadMetadata(filename));
+            String metadataJson = objectMapper.writeValueAsString(new UploadMetadata(
+                    filename,
+                    parentFolderId == null || parentFolderId.isBlank() ? null : List.of(parentFolderId)));
             byte[] metadata = (
                     "--" + boundary + "\r\n"
                             + "Content-Type: application/json; charset=UTF-8\r\n\r\n"
@@ -274,7 +307,9 @@ public class GoogleDriveClient {
         return "Bearer " + token;
     }
 
-    private record UploadMetadata(String name) {}
+    private record UploadMetadata(String name, List<String> parents) {}
+
+    private record CreateFileMetadata(String name, String mimeType, List<String> parents) {}
 
     public record TokenResponse(
             @JsonProperty("access_token") String accessToken,
@@ -301,7 +336,8 @@ public class GoogleDriveClient {
             String webContentLink,
             String thumbnailLink,
             String size,
-            Instant createdTime) {}
+            Instant createdTime,
+            List<String> parents) {}
 
     public record DownloadedFile(byte[] body, String contentType) {}
 }

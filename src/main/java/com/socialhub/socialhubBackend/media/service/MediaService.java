@@ -3,12 +3,16 @@ package com.socialhub.socialhubBackend.media.service;
 import com.socialhub.socialhubBackend.common.exception.BusinessException;
 import com.socialhub.socialhubBackend.common.exception.ResourceNotFoundException;
 import com.socialhub.socialhubBackend.media.domain.MediaAsset;
+import com.socialhub.socialhubBackend.media.domain.MediaFolder;
 import com.socialhub.socialhubBackend.media.domain.MediaType;
 import com.socialhub.socialhubBackend.media.domain.MediaUploadStatus;
+import com.socialhub.socialhubBackend.media.dto.MediaDtos.CreateMediaFolderRequest;
 import com.socialhub.socialhubBackend.media.dto.MediaDtos.MediaBulkUploadResult;
+import com.socialhub.socialhubBackend.media.dto.MediaDtos.MediaFolderResponse;
 import com.socialhub.socialhubBackend.media.dto.MediaDtos.MediaItemResponse;
 import com.socialhub.socialhubBackend.media.dto.MediaDtos.MediaUploadItemResult;
 import com.socialhub.socialhubBackend.media.repository.MediaAssetRepository;
+import com.socialhub.socialhubBackend.media.repository.MediaFolderRepository;
 import com.socialhub.socialhubBackend.post.repository.PostRepository;
 import com.socialhub.socialhubBackend.storage.drive.GoogleDriveClient.DownloadedFile;
 import com.socialhub.socialhubBackend.storage.drive.GoogleDriveClient.DriveFile;
@@ -29,9 +33,11 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -59,6 +65,7 @@ public class MediaService {
     private static final Duration EXTERNAL_MEDIA_TIMEOUT = Duration.ofSeconds(20);
 
     private final MediaAssetRepository mediaRepository;
+    private final MediaFolderRepository folderRepository;
     private final PostRepository postRepository;
     private final GoogleDriveService googleDriveService;
     private final CurrentUserProvider currentUserProvider;
@@ -69,34 +76,70 @@ public class MediaService {
 
     public MediaService(
             MediaAssetRepository mediaRepository,
+            MediaFolderRepository folderRepository,
             PostRepository postRepository,
             GoogleDriveService googleDriveService,
             CurrentUserProvider currentUserProvider) {
         this.mediaRepository = mediaRepository;
+        this.folderRepository = folderRepository;
         this.postRepository = postRepository;
         this.googleDriveService = googleDriveService;
         this.currentUserProvider = currentUserProvider;
     }
 
-    public List<MediaItemResponse> list(String filter) {
+    public List<MediaItemResponse> list(String filter, Long folderId) {
         CurrentUser user = currentUserProvider.currentUser();
+        Long resolvedFolderId = resolveFolderScope(user, folderId);
         return mediaRepository
-                .findAll(mediaSpecification(user, normalizeFilter(filter)), Sort.by(Sort.Direction.DESC, "createdAt"))
+                .findAll(
+                        mediaSpecification(user, normalizeFilter(filter), resolvedFolderId),
+                        Sort.by(Sort.Direction.DESC, "createdAt"))
                 .stream()
                 .map(this::toResponse)
                 .toList();
     }
 
-    public MediaBulkUploadResult upload(MultipartFile[] files) {
+    public List<MediaFolderResponse> folders() {
+        CurrentUser user = currentUserProvider.currentUser();
+        List<MediaFolder> folders = folderRepository.findByOrganizationIdAndUserIdOrderByNameAsc(
+                user.organizationId(), user.userId());
+        Map<Long, Long> counts = folderCounts(user, folders);
+        return folders.stream().map(folder -> toFolderResponse(folder, counts.getOrDefault(folder.getId(), 0L))).toList();
+    }
+
+    public MediaFolderResponse createFolder(CreateMediaFolderRequest request) {
+        CurrentUser user = currentUserProvider.currentUser();
+        String name = request == null || request.name() == null ? "" : request.name().trim();
+        if (name.isBlank()) {
+            throw new BusinessException("Folder name is required.");
+        }
+        folderRepository
+                .findByOrganizationIdAndUserIdAndNameIgnoreCase(user.organizationId(), user.userId(), name)
+                .ifPresent(existing -> {
+                    throw new BusinessException("A folder with this name already exists.");
+                });
+        DriveFile driveFolder = googleDriveService.createFolder(name);
+        MediaFolder folder = new MediaFolder();
+        folder.setOrganizationId(user.organizationId());
+        folder.setUserId(user.userId());
+        folder.setName(name);
+        folder.setGoogleDriveFolderId(driveFolder.id());
+        folder.setGoogleDriveUrl(driveFolder.webViewLink());
+        return toFolderResponse(folderRepository.save(folder), 0);
+    }
+
+    public MediaBulkUploadResult upload(MultipartFile[] files, Long folderId) {
         if (files == null || files.length == 0) {
             throw new BusinessException("Choose at least one media file to upload.");
         }
+        CurrentUser user = currentUserProvider.currentUser();
+        MediaFolder folder = resolveFolder(user, folderId);
         List<MediaUploadItemResult> items = new ArrayList<>();
         int uploaded = 0;
         int failed = 0;
         int duplicate = 0;
         for (MultipartFile file : files) {
-            MediaUploadItemResult result = uploadOne(file);
+            MediaUploadItemResult result = uploadOne(file, folder);
             items.add(result);
             if (result.duplicate()) {
                 duplicate++;
@@ -144,7 +187,12 @@ public class MediaService {
         asset.setUploadStatus(MediaUploadStatus.UPLOADING);
         asset.setErrorMessage(null);
         mediaRepository.save(asset);
-        uploadToDrive(asset, file);
+        MediaFolder folder = asset.getFolderId() == null
+                ? null
+                : folderRepository.findByIdAndOrganizationIdAndUserId(
+                                asset.getFolderId(), asset.getOrganizationId(), asset.getUserId())
+                        .orElse(null);
+        uploadToDrive(asset, file, folder);
         return toResponse(asset);
     }
 
@@ -165,15 +213,15 @@ public class MediaService {
         mediaRepository.delete(asset);
     }
 
-    public byte[] export(String format) {
-        List<MediaItemResponse> media = list("ALL");
+    public byte[] export(String format, Long folderId) {
+        List<MediaItemResponse> media = list("ALL", folderId);
         if ("xlsx".equalsIgnoreCase(format)) {
             return exportXlsx(media);
         }
         return exportCsv(media);
     }
 
-    private MediaUploadItemResult uploadOne(MultipartFile file) {
+    private MediaUploadItemResult uploadOne(MultipartFile file, MediaFolder folder) {
         String incomingName = originalFilename(file);
         try {
             FileInfo info = fileInfo(file);
@@ -201,9 +249,10 @@ public class MediaService {
             asset.setExtension(info.extension());
             asset.setFileSize(info.size());
             asset.setChecksumSha256(info.checksum());
+            asset.setFolderId(folder == null ? null : folder.getId());
             asset.setUploadStatus(MediaUploadStatus.UPLOADING);
             mediaRepository.saveAndFlush(asset);
-            uploadToDrive(asset, file);
+            uploadToDrive(asset, file, folder);
             boolean ok = asset.getUploadStatus() == MediaUploadStatus.UPLOADED;
             return new MediaUploadItemResult(incomingName, false, ok, asset.getErrorMessage(), toResponse(asset));
         } catch (BusinessException ex) {
@@ -250,9 +299,11 @@ public class MediaService {
         return toResponse(asset);
     }
 
-    private void uploadToDrive(MediaAsset asset, MultipartFile file) {
+    private void uploadToDrive(MediaAsset asset, MultipartFile file, MediaFolder folder) {
         try {
-            DriveFile driveFile = googleDriveService.uploadMediaFile(file);
+            DriveFile driveFile = folder == null
+                    ? googleDriveService.uploadMediaFile(file)
+                    : googleDriveService.uploadMediaFile(file, folder.getGoogleDriveFolderId());
             asset.setGoogleDriveFileId(driveFile.id());
             asset.setGoogleDriveUrl(driveFile.webViewLink());
             asset.setDirectDownloadUrl(driveFile.webContentLink());
@@ -288,6 +339,22 @@ public class MediaService {
         return mediaRepository
                 .findByIdAndOrganizationIdAndUserId(id, user.organizationId(), user.userId())
                 .orElseThrow(() -> new ResourceNotFoundException("Media", id));
+    }
+
+    private MediaFolder resolveFolder(CurrentUser user, Long folderId) {
+        if (folderId == null || folderId == 0L) {
+            return null;
+        }
+        return folderRepository
+                .findByIdAndOrganizationIdAndUserId(folderId, user.organizationId(), user.userId())
+                .orElseThrow(() -> new BusinessException("Selected folder was not found."));
+    }
+
+    private Long resolveFolderScope(CurrentUser user, Long folderId) {
+        if (folderId == null || folderId == 0L) {
+            return folderId;
+        }
+        return resolveFolder(user, folderId).getId();
     }
 
     private FileInfo fileInfo(MultipartFile file) {
@@ -400,6 +467,11 @@ public class MediaService {
     }
 
     private MediaItemResponse toResponse(MediaAsset asset) {
+        MediaFolder folder = asset.getFolderId() == null
+                ? null
+                : folderRepository.findByIdAndOrganizationIdAndUserId(
+                                asset.getFolderId(), asset.getOrganizationId(), asset.getUserId())
+                        .orElse(null);
         return new MediaItemResponse(
                 asset.getId(),
                 asset.getFileName(),
@@ -409,6 +481,8 @@ public class MediaService {
                 asset.getExtension(),
                 asset.getFileSize(),
                 asset.getChecksumSha256(),
+                asset.getFolderId(),
+                folder == null ? null : folder.getName(),
                 asset.getGoogleDriveFileId(),
                 asset.getGoogleDriveUrl(),
                 asset.getDirectDownloadUrl(),
@@ -418,6 +492,17 @@ public class MediaService {
                 relatedPostCount(asset),
                 asset.getCreatedAt(),
                 asset.getUpdatedAt());
+    }
+
+    private MediaFolderResponse toFolderResponse(MediaFolder folder, long mediaCount) {
+        return new MediaFolderResponse(
+                folder.getId(),
+                folder.getName(),
+                folder.getGoogleDriveFolderId(),
+                folder.getGoogleDriveUrl(),
+                mediaCount,
+                folder.getCreatedAt(),
+                folder.getUpdatedAt());
     }
 
     private long relatedPostCount(MediaAsset asset) {
@@ -435,11 +520,16 @@ public class MediaService {
                 asset.getOrganizationId(), asset.getUserId(), asset.getId(), urls);
     }
 
-    private Specification<MediaAsset> mediaSpecification(CurrentUser user, String filter) {
+    private Specification<MediaAsset> mediaSpecification(CurrentUser user, String filter, Long folderId) {
         return (root, query, cb) -> {
             List<jakarta.persistence.criteria.Predicate> predicates = new ArrayList<>();
             predicates.add(cb.equal(root.get("organizationId"), user.organizationId()));
             predicates.add(cb.equal(root.get("userId"), user.userId()));
+            if (folderId != null && folderId == 0L) {
+                predicates.add(cb.isNull(root.get("folderId")));
+            } else if (folderId != null && folderId > 0) {
+                predicates.add(cb.equal(root.get("folderId"), folderId));
+            }
             switch (filter) {
                 case "IMAGES" -> predicates.add(cb.equal(root.get("mediaType"), MediaType.IMAGE));
                 case "VIDEOS" -> predicates.add(cb.equal(root.get("mediaType"), MediaType.VIDEO));
@@ -456,6 +546,20 @@ public class MediaService {
 
     private String normalizeFilter(String filter) {
         return filter == null || filter.isBlank() ? "ALL" : filter.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private Map<Long, Long> folderCounts(CurrentUser user, List<MediaFolder> folders) {
+        Map<Long, Long> counts = new HashMap<>();
+        if (folders.isEmpty()) {
+            return counts;
+        }
+        List<Long> folderIds = folders.stream().map(MediaFolder::getId).toList();
+        for (Object[] row : mediaRepository.countByFolderIds(user.organizationId(), user.userId(), folderIds)) {
+            if (row[0] instanceof Long folderId && row[1] instanceof Number count) {
+                counts.put(folderId, count.longValue());
+            }
+        }
+        return counts;
     }
 
     private byte[] exportCsv(List<MediaItemResponse> media) {
