@@ -3,6 +3,7 @@ package com.socialhub.socialhubBackend.integration.facebook.web;
 import com.socialhub.socialhubBackend.common.response.ApiResponse;
 import com.socialhub.socialhubBackend.integration.facebook.credential.FacebookCredentialDtos.CredentialConfigRequest;
 import com.socialhub.socialhubBackend.integration.facebook.credential.FacebookCredentialDtos.CredentialConfigResponse;
+import com.socialhub.socialhubBackend.integration.facebook.credential.FacebookCredentialDtos.CredentialConfigUpdateRequest;
 import com.socialhub.socialhubBackend.integration.facebook.credential.FacebookCredentialDtos.CredentialRequest;
 import com.socialhub.socialhubBackend.integration.facebook.credential.FacebookCredentialDtos.CredentialStatus;
 import com.socialhub.socialhubBackend.integration.facebook.credential.FacebookCredentialService;
@@ -10,8 +11,11 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -53,5 +57,20 @@ public class FacebookCredentialController {
     public ApiResponse<CredentialConfigResponse> createConfig(
             @Valid @RequestBody CredentialConfigRequest request) {
         return ApiResponse.ok(credentialService.createConfig(request), "Facebook app configuration saved");
+    }
+
+    @PutMapping("/configs/{id}")
+    @Operation(summary = "Validate and update a Facebook app configuration")
+    public ApiResponse<CredentialConfigResponse> updateConfig(
+            @PathVariable Long id,
+            @Valid @RequestBody CredentialConfigUpdateRequest request) {
+        return ApiResponse.ok(credentialService.updateConfig(id, request), "Facebook app configuration updated");
+    }
+
+    @DeleteMapping("/configs/{id}")
+    @Operation(summary = "Soft-delete a Facebook app configuration")
+    public ApiResponse<Void> deleteConfig(@PathVariable Long id) {
+        credentialService.softDeleteConfig(id);
+        return ApiResponse.ok(null, "Facebook app configuration removed");
     }
 }

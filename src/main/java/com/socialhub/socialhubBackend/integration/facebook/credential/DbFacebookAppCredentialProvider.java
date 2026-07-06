@@ -31,7 +31,8 @@ public class DbFacebookAppCredentialProvider implements FacebookAppCredentialPro
     public FacebookAppCredentials resolve() {
         CurrentUser user = currentUserProvider.currentUser();
         FacebookAppCredential credential = repository
-                .findFirstByOrganizationIdAndUserIdOrderByIdAsc(user.organizationId(), user.userId())
+                .findFirstByOrganizationIdAndUserIdAndStatusAndDeletedAtIsNullOrderByIdAsc(
+                        user.organizationId(), user.userId(), FacebookAppCredentialStatus.ACTIVE)
                 .orElseThrow(() -> new BusinessException(
                         "Add your Facebook app credentials (App ID and App Secret) before connecting."));
         return toCredentials(credential);
@@ -41,7 +42,8 @@ public class DbFacebookAppCredentialProvider implements FacebookAppCredentialPro
     public FacebookAppCredentials resolveById(Long configId) {
         CurrentUser user = currentUserProvider.currentUser();
         FacebookAppCredential credential = repository
-                .findByIdAndOrganizationIdAndUserId(configId, user.organizationId(), user.userId())
+                .findByIdAndOrganizationIdAndUserIdAndStatusAndDeletedAtIsNull(
+                        configId, user.organizationId(), user.userId(), FacebookAppCredentialStatus.ACTIVE)
                 .orElseThrow(() -> new BusinessException("Facebook app configuration not found: " + configId));
         return toCredentials(credential);
     }
@@ -53,7 +55,8 @@ public class DbFacebookAppCredentialProvider implements FacebookAppCredentialPro
         }
         CurrentUser user = currentUserProvider.currentUser();
         return repository
-                .findByIdAndOrganizationIdAndUserId(configId, user.organizationId(), user.userId())
+                .findByIdAndOrganizationIdAndUserIdAndStatusAndDeletedAtIsNull(
+                        configId, user.organizationId(), user.userId(), FacebookAppCredentialStatus.ACTIVE)
                 .map(FacebookAppCredential::getApiVersion)
                 .orElse(null);
     }
@@ -62,7 +65,8 @@ public class DbFacebookAppCredentialProvider implements FacebookAppCredentialPro
     public boolean isConfigured() {
         CurrentUser user = currentUserProvider.currentUser();
         return repository
-                .findFirstByOrganizationIdAndUserIdOrderByIdAsc(user.organizationId(), user.userId())
+                .findFirstByOrganizationIdAndUserIdAndStatusAndDeletedAtIsNullOrderByIdAsc(
+                        user.organizationId(), user.userId(), FacebookAppCredentialStatus.ACTIVE)
                 .isPresent();
     }
 

@@ -1,6 +1,7 @@
 package com.socialhub.socialhubBackend.integration.core.repository;
 
 import com.socialhub.socialhubBackend.integration.core.SocialPlatform;
+import com.socialhub.socialhubBackend.integration.core.domain.IntegrationStatus;
 import com.socialhub.socialhubBackend.integration.core.domain.SocialIntegration;
 import java.util.List;
 import java.util.Optional;
@@ -27,6 +28,13 @@ public interface SocialIntegrationRepository extends JpaRepository<SocialIntegra
     /** Exact identity lookup for an owned platform account/page. */
     Optional<SocialIntegration> findByOrganizationIdAndUserIdAndPlatformAndExternalAccountId(
             Long organizationId, Long userId, SocialPlatform platform, String externalAccountId);
+
+    boolean existsByOrganizationIdAndUserIdAndPlatformAndAppCredentialIdAndStatus(
+            Long organizationId,
+            Long userId,
+            SocialPlatform platform,
+            Long appCredentialId,
+            IntegrationStatus status);
 
     /** Org-wide lookup (no user scope) — only for internal sync jobs, never request-scoped. */
     List<SocialIntegration> findByOrganizationId(Long organizationId);

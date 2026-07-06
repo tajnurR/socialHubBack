@@ -3,7 +3,10 @@ package com.socialhub.socialhubBackend.integration.facebook.credential;
 import com.socialhub.socialhubBackend.common.entity.TenantBaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Table;
+import java.time.Instant;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -45,4 +48,11 @@ public class FacebookAppCredential extends TenantBaseEntity {
     /** Per-config Graph API version override; null → use the global default. */
     @Column(name = "api_version", length = 20)
     private String apiVersion;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 30)
+    private FacebookAppCredentialStatus status = FacebookAppCredentialStatus.ACTIVE;
+
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
 }

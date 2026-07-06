@@ -1,6 +1,7 @@
 package com.socialhub.socialhubBackend.integration.facebook.credential;
 
 import jakarta.validation.constraints.NotBlank;
+import java.time.Instant;
 
 /** Request/response DTOs for managing per-user Facebook app credentials. */
 public final class FacebookCredentialDtos {
@@ -19,6 +20,15 @@ public final class FacebookCredentialDtos {
             String scopes,
             String apiVersion) {}
 
+    /** Update an existing Meta app config. Blank appSecret keeps the encrypted secret. */
+    public record CredentialConfigUpdateRequest(
+            @NotBlank String appId,
+            String appSecret,
+            String label,
+            String redirectUri,
+            String scopes,
+            String apiVersion) {}
+
     /** A Meta app config owned by the current user. The secret is never returned. */
     public record CredentialConfigResponse(
             Long id,
@@ -27,7 +37,10 @@ public final class FacebookCredentialDtos {
             String appSecretMasked,
             String redirectUri,
             String scopes,
-            String apiVersion) {}
+            String apiVersion,
+            boolean connected,
+            Instant createdAt,
+            FacebookAppCredentialStatus status) {}
 
     /** Status/representation — the secret is never returned, only a masked hint. */
     public record CredentialStatus(boolean configured, String appId, String appSecretMasked) {

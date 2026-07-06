@@ -9,13 +9,14 @@ import org.springframework.stereotype.Repository;
 public interface FacebookAppCredentialRepository extends JpaRepository<FacebookAppCredential, Long> {
 
     /** All app configs owned by a user within an organization. */
-    List<FacebookAppCredential> findByOrganizationIdAndUserId(Long organizationId, Long userId);
+    List<FacebookAppCredential> findByOrganizationIdAndUserIdAndStatusAndDeletedAtIsNullOrderByIdAsc(
+            Long organizationId, Long userId, FacebookAppCredentialStatus status);
 
     /** The user's primary/default app config (lowest id) — used by legacy status/save calls. */
-    Optional<FacebookAppCredential> findFirstByOrganizationIdAndUserIdOrderByIdAsc(
-            Long organizationId, Long userId);
+    Optional<FacebookAppCredential> findFirstByOrganizationIdAndUserIdAndStatusAndDeletedAtIsNullOrderByIdAsc(
+            Long organizationId, Long userId, FacebookAppCredentialStatus status);
 
     /** A specific app config owned by a user (ownership-checked). */
-    Optional<FacebookAppCredential> findByIdAndOrganizationIdAndUserId(
-            Long id, Long organizationId, Long userId);
+    Optional<FacebookAppCredential> findByIdAndOrganizationIdAndUserIdAndStatusAndDeletedAtIsNull(
+            Long id, Long organizationId, Long userId, FacebookAppCredentialStatus status);
 }
