@@ -22,6 +22,9 @@ public interface MediaAssetRepository
     Optional<MediaAsset> findByOrganizationIdAndUserIdAndGoogleDriveFileId(
             Long organizationId, Long userId, String googleDriveFileId);
 
+    List<MediaAsset> findByOrganizationIdAndUserIdAndIdInOrderByCreatedAtDesc(
+            Long organizationId, Long userId, Collection<Long> ids);
+
     @Query("""
             select m.folderId, count(m.id)
             from MediaAsset m

@@ -5,6 +5,7 @@ import com.socialhub.socialhubBackend.media.dto.MediaDtos.CreateMediaFolderReque
 import com.socialhub.socialhubBackend.media.dto.MediaDtos.MediaBulkUploadResult;
 import com.socialhub.socialhubBackend.media.dto.MediaDtos.MediaFolderResponse;
 import com.socialhub.socialhubBackend.media.dto.MediaDtos.MediaItemResponse;
+import com.socialhub.socialhubBackend.media.dto.MediaDtos.MediaPageResponse;
 import com.socialhub.socialhubBackend.media.service.MediaService;
 import com.socialhub.socialhubBackend.media.service.MediaService.DownloadedMedia;
 import io.swagger.v3.oas.annotations.Operation;
@@ -44,6 +45,18 @@ public class MediaController {
             @RequestParam(defaultValue = "ALL") String filter,
             @RequestParam(required = false) Long folderId) {
         return ApiResponse.ok(service.list(filter, folderId));
+    }
+
+    @GetMapping("/page")
+    @Operation(summary = "Page through the current user's media library")
+    public ApiResponse<MediaPageResponse> page(
+            @RequestParam(defaultValue = "ALL") String filter,
+            @RequestParam(required = false) Long folderId,
+            @RequestParam(required = false) String search,
+            @RequestParam(defaultValue = "NEWEST") String sortOrder,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return ApiResponse.ok(service.page(filter, folderId, search, sortOrder, page, size));
     }
 
     @GetMapping("/folders")
@@ -95,9 +108,10 @@ public class MediaController {
     @Operation(summary = "Export uploaded media URLs as CSV or XLSX")
     public ResponseEntity<byte[]> export(
             @RequestParam(defaultValue = "csv") String format,
-            @RequestParam(required = false) Long folderId) {
+            @RequestParam(required = false) Long folderId,
+            @RequestParam(required = false) List<Long> ids) {
         boolean xlsx = "xlsx".equalsIgnoreCase(format);
-        byte[] body = service.export(xlsx ? "xlsx" : "csv", folderId);
+        byte[] body = service.export(xlsx ? "xlsx" : "csv", folderId, ids);
         String filename = xlsx ? "media-library.xlsx" : "media-library.csv";
         MediaType contentType = xlsx
                 ? MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

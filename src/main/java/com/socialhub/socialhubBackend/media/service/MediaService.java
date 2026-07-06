@@ -10,6 +10,7 @@ import com.socialhub.socialhubBackend.media.dto.MediaDtos.CreateMediaFolderReque
 import com.socialhub.socialhubBackend.media.dto.MediaDtos.MediaBulkUploadResult;
 import com.socialhub.socialhubBackend.media.dto.MediaDtos.MediaFolderResponse;
 import com.socialhub.socialhubBackend.media.dto.MediaDtos.MediaItemResponse;
+import com.socialhub.socialhubBackend.media.dto.MediaDtos.MediaPageResponse;
 import com.socialhub.socialhubBackend.media.dto.MediaDtos.MediaUploadItemResult;
 import com.socialhub.socialhubBackend.media.repository.MediaAssetRepository;
 import com.socialhub.socialhubBackend.media.repository.MediaFolderRepository;
@@ -35,10 +36,14 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
@@ -99,6 +104,29 @@ public class MediaService {
                 .toList();
     }
 
+    public MediaPageResponse page(
+            String filter,
+            Long folderId,
+            String search,
+            String sortOrder,
+            int page,
+            int size) {
+        CurrentUser user = currentUserProvider.currentUser();
+        Long resolvedFolderId = resolveFolderScope(user, folderId);
+        int resolvedSize = Math.max(10, Math.min(size, 100));
+        int resolvedPage = Math.max(page, 0);
+        SearchScope searchScope = searchScope(user, search);
+        Page<MediaAsset> result = mediaRepository.findAll(
+                mediaSpecification(user, normalizeFilter(filter), resolvedFolderId, searchScope),
+                PageRequest.of(resolvedPage, resolvedSize, sortFor(sortOrder)));
+        return new MediaPageResponse(
+                result.getContent().stream().map(this::toResponse).toList(),
+                result.getTotalElements(),
+                result.getNumber(),
+                result.getSize(),
+                result.getTotalPages());
+    }
+
     public List<MediaFolderResponse> folders() {
         CurrentUser user = currentUserProvider.currentUser();
         List<MediaFolder> folders = folderRepository.findByOrganizationIdAndUserIdOrderByNameAsc(
@@ -133,7 +161,7 @@ public class MediaService {
             throw new BusinessException("Choose at least one media file to upload.");
         }
         CurrentUser user = currentUserProvider.currentUser();
-        MediaFolder folder = resolveFolder(user, folderId);
+        MediaFolder folder = requireUploadFolder(user, folderId);
         List<MediaUploadItemResult> items = new ArrayList<>();
         int uploaded = 0;
         int failed = 0;
@@ -213,8 +241,11 @@ public class MediaService {
         mediaRepository.delete(asset);
     }
 
-    public byte[] export(String format, Long folderId) {
-        List<MediaItemResponse> media = list("ALL", folderId);
+    public byte[] export(String format, Long folderId, List<Long> mediaIds) {
+        List<MediaItemResponse> media = selectedMedia(mediaIds);
+        if (media.isEmpty()) {
+            media = list("ALL", folderId);
+        }
         if ("xlsx".equalsIgnoreCase(format)) {
             return exportXlsx(media);
         }
@@ -350,11 +381,37 @@ public class MediaService {
                 .orElseThrow(() -> new BusinessException("Selected folder was not found."));
     }
 
+    private MediaFolder requireUploadFolder(CurrentUser user, Long folderId) {
+        if (folderId == null || folderId == 0L) {
+            throw new BusinessException("Select or create a folder before uploading media.");
+        }
+        return resolveFolder(user, folderId);
+    }
+
     private Long resolveFolderScope(CurrentUser user, Long folderId) {
         if (folderId == null || folderId == 0L) {
             return folderId;
         }
         return resolveFolder(user, folderId).getId();
+    }
+
+    private List<MediaItemResponse> selectedMedia(List<Long> mediaIds) {
+        if (mediaIds == null || mediaIds.isEmpty()) {
+            return List.of();
+        }
+        Set<Long> ids = new LinkedHashSet<>(mediaIds.stream()
+                .filter(id -> id != null && id > 0)
+                .toList());
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        CurrentUser user = currentUserProvider.currentUser();
+        List<MediaAsset> media = mediaRepository.findByOrganizationIdAndUserIdAndIdInOrderByCreatedAtDesc(
+                user.organizationId(), user.userId(), ids);
+        if (media.size() != ids.size()) {
+            throw new BusinessException("One or more selected media files were not found.");
+        }
+        return media.stream().map(this::toResponse).toList();
     }
 
     private FileInfo fileInfo(MultipartFile file) {
@@ -521,6 +578,14 @@ public class MediaService {
     }
 
     private Specification<MediaAsset> mediaSpecification(CurrentUser user, String filter, Long folderId) {
+        return mediaSpecification(user, filter, folderId, SearchScope.empty());
+    }
+
+    private Specification<MediaAsset> mediaSpecification(
+            CurrentUser user,
+            String filter,
+            Long folderId,
+            SearchScope searchScope) {
         return (root, query, cb) -> {
             List<jakarta.persistence.criteria.Predicate> predicates = new ArrayList<>();
             predicates.add(cb.equal(root.get("organizationId"), user.organizationId()));
@@ -540,12 +605,52 @@ public class MediaService {
                 default -> {
                 }
             }
+            if (searchScope.hasSearch()) {
+                String pattern = "%" + searchScope.term().toLowerCase(Locale.ROOT) + "%";
+                List<jakarta.persistence.criteria.Predicate> searchPredicates = new ArrayList<>();
+                searchPredicates.add(cb.like(cb.lower(root.get("fileName")), pattern));
+                searchPredicates.add(cb.like(cb.lower(root.get("originalFileName")), pattern));
+                searchPredicates.add(cb.like(cb.lower(root.get("contentType")), pattern));
+                searchPredicates.add(cb.like(cb.lower(root.get("extension")), pattern));
+                searchPredicates.add(cb.like(cb.lower(root.get("uploadStatus").as(String.class)), pattern));
+                if (!searchScope.folderIds().isEmpty()) {
+                    searchPredicates.add(root.get("folderId").in(searchScope.folderIds()));
+                }
+                predicates.add(cb.or(searchPredicates.toArray(jakarta.persistence.criteria.Predicate[]::new)));
+            }
             return cb.and(predicates.toArray(jakarta.persistence.criteria.Predicate[]::new));
         };
     }
 
     private String normalizeFilter(String filter) {
         return filter == null || filter.isBlank() ? "ALL" : filter.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private SearchScope searchScope(CurrentUser user, String search) {
+        String term = search == null ? "" : search.trim();
+        if (term.isBlank()) {
+            return SearchScope.empty();
+        }
+        List<Long> folderIds = folderRepository
+                .findByOrganizationIdAndUserIdAndNameContainingIgnoreCase(
+                        user.organizationId(), user.userId(), term)
+                .stream()
+                .map(MediaFolder::getId)
+                .toList();
+        return new SearchScope(term, folderIds);
+    }
+
+    private Sort sortFor(String sortOrder) {
+        String normalized = sortOrder == null || sortOrder.isBlank()
+                ? "NEWEST"
+                : sortOrder.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "OLDEST" -> Sort.by(Sort.Direction.ASC, "createdAt");
+            case "NAME_ASC" -> Sort.by(Sort.Direction.ASC, "fileName");
+            case "NAME_DESC" -> Sort.by(Sort.Direction.DESC, "fileName");
+            case "SIZE_DESC" -> Sort.by(Sort.Direction.DESC, "fileSize");
+            default -> Sort.by(Sort.Direction.DESC, "createdAt");
+        };
     }
 
     private Map<Long, Long> folderCounts(CurrentUser user, List<MediaFolder> folders) {
@@ -799,6 +904,16 @@ public class MediaService {
             Long fileSize,
             String checksum,
             byte[] bytes) {}
+
+    private record SearchScope(String term, List<Long> folderIds) {
+        private static SearchScope empty() {
+            return new SearchScope("", List.of());
+        }
+
+        private boolean hasSearch() {
+            return term != null && !term.isBlank();
+        }
+    }
 
     public record DownloadedMedia(String fileName, String contentType, byte[] body) {}
 }

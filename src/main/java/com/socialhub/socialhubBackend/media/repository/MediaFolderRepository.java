@@ -11,6 +11,9 @@ public interface MediaFolderRepository extends JpaRepository<MediaFolder, Long> 
 
     List<MediaFolder> findByOrganizationIdAndUserIdOrderByNameAsc(Long organizationId, Long userId);
 
+    List<MediaFolder> findByOrganizationIdAndUserIdAndNameContainingIgnoreCase(
+            Long organizationId, Long userId, String name);
+
     Optional<MediaFolder> findByIdAndOrganizationIdAndUserId(Long id, Long organizationId, Long userId);
 
     Optional<MediaFolder> findByOrganizationIdAndUserIdAndNameIgnoreCase(Long organizationId, Long userId, String name);

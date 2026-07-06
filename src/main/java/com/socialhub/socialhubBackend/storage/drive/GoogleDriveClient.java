@@ -33,7 +33,8 @@ public class GoogleDriveClient {
 
     private static final Logger log = LoggerFactory.getLogger(GoogleDriveClient.class);
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
-    private static final Duration READ_TIMEOUT = Duration.ofSeconds(30);
+    private static final Duration READ_TIMEOUT = Duration.ofMinutes(5);
+    private static final int MULTIPART_UPLOAD_LIMIT_BYTES = 5 * 1024 * 1024;
 
     private final RestClient client;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -140,6 +141,9 @@ public class GoogleDriveClient {
 
     public DriveFile uploadFile(
             String accessToken, String filename, String contentType, byte[] bytes, String parentFolderId) {
+        if (bytes.length > MULTIPART_UPLOAD_LIMIT_BYTES) {
+            return uploadFileResumable(accessToken, filename, contentType, bytes, parentFolderId);
+        }
         String boundary = "socialhub-drive-" + Instant.now().toEpochMilli();
         byte[] body = multipartRelatedBody(filename, contentType, bytes, boundary, parentFolderId);
         URI uri = UriComponentsBuilder.fromUriString(properties.uploadBaseUrl())
@@ -154,6 +158,44 @@ public class GoogleDriveClient {
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
                         .header(HttpHeaders.CONTENT_TYPE, "multipart/related; boundary=" + boundary)
                         .body(body)
+                        .retrieve()
+                        .body(DriveFile.class),
+                "upload media to Google Drive");
+    }
+
+    private DriveFile uploadFileResumable(
+            String accessToken, String filename, String contentType, byte[] bytes, String parentFolderId) {
+        URI initUri = UriComponentsBuilder.fromUriString(properties.uploadBaseUrl())
+                .path("/files")
+                .queryParam("uploadType", "resumable")
+                .queryParam("fields", "id,name,mimeType,webViewLink,webContentLink,thumbnailLink,size,createdTime,parents")
+                .build()
+                .toUri();
+        UploadMetadata metadata = new UploadMetadata(
+                filename,
+                parentFolderId == null || parentFolderId.isBlank() ? null : List.of(parentFolderId));
+        ResponseEntity<Void> initResponse = call(
+                () -> client.post()
+                        .uri(initUri)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .header("X-Upload-Content-Type", contentType)
+                        .header("X-Upload-Content-Length", String.valueOf(bytes.length))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(metadata)
+                        .retrieve()
+                        .toBodilessEntity(),
+                "start resumable Google Drive upload");
+        URI uploadUri = initResponse.getHeaders().getLocation();
+        if (uploadUri == null) {
+            throw new BusinessException("Google Drive did not return an upload session.");
+        }
+        return call(
+                () -> client.put()
+                        .uri(uploadUri)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .header(HttpHeaders.CONTENT_TYPE, contentType)
+                        .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(bytes.length))
+                        .body(bytes)
                         .retrieve()
                         .body(DriveFile.class),
                 "upload media to Google Drive");

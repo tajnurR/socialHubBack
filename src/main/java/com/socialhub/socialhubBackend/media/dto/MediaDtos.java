@@ -49,6 +49,13 @@ public final class MediaDtos {
             String errorMessage,
             MediaItemResponse media) {}
 
+    public record MediaPageResponse(
+            List<MediaItemResponse> items,
+            long totalCount,
+            int page,
+            int pageSize,
+            int totalPages) {}
+
     public record MediaBulkUploadResult(
             int totalCount,
             int uploadedCount,

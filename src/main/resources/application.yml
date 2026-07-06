@@ -10,6 +10,11 @@ spring:
     # Active profile is chosen via SPRING_PROFILES_ACTIVE; defaults to dev locally.
     default: dev
 
+  servlet:
+    multipart:
+      max-file-size: ${MEDIA_MAX_FILE_SIZE:512MB}
+      max-request-size: ${MEDIA_MAX_REQUEST_SIZE:512MB}
+
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/socialhub}
     username: ${DB_USERNAME:tajnur}
