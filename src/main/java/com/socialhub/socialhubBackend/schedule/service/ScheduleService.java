@@ -19,6 +19,7 @@ import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.BestTimeSuggesti
 import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.ConflictWarning;
 import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.EngagementSummary;
 import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.QuickPostActionRequest;
+import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.PostTimeOverrideRequest;
 import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.ReschedulePostRequest;
 import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.ScheduleEventResponse;
 import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.ScheduleInsight;
@@ -111,7 +112,6 @@ public class ScheduleService {
         event.setUserId(user.userId());
         applyScheduleRequest(event, request);
         ScheduleEvent saved = eventRepository.save(event);
-        syncPosts(saved, request.posts() != null ? request.posts() : List.of());
         return toScheduleResponse(saved);
     }
 
@@ -120,7 +120,6 @@ public class ScheduleService {
         ScheduleEvent event = getOwnedEvent(id);
         applyScheduleRequest(event, request);
         ScheduleEvent saved = eventRepository.save(event);
-        syncPosts(saved, request.posts() != null ? request.posts() : List.of());
         return toScheduleResponse(saved);
     }
 
@@ -214,17 +213,16 @@ public class ScheduleService {
             Post post = postRepository
                     .findByIdAndOrganizationIdAndUserId(postId, user.organizationId(), user.userId())
                     .orElseThrow(() -> new ResourceNotFoundException("Post", postId));
-            if (post.getStatus() == PostStatus.POSTED) {
-                throw new BusinessException("Post " + post.getId() + " is already published.");
+            if (post.getStatus() != PostStatus.DRAFT) {
+                throw new BusinessException("Only draft posts can be added to a schedule. Clone posted posts first.");
             }
-            if (post.getStatus() == PostStatus.PROCESSING) {
-                throw new BusinessException("Post " + post.getId() + " is currently publishing.");
+            if (post.getScheduleEventId() != null) {
+                throw new BusinessException("Post " + post.getId() + " already belongs to a schedule.");
             }
             post.setScheduleEventId(event.getId());
             post.setSortOrder(nextSortOrder++);
             post.setScheduledAt(nextSlot);
-            post.setPlatform(schedulePlatform(event));
-            post.setSocialIntegrationId(event.getSocialIntegrationId());
+            applyScheduleTarget(event, post);
             post.setStatus(statusForAttachedPost(event, post));
             post.setErrorMessage(null);
             post.setRetryCount(0);
@@ -271,8 +269,41 @@ public class ScheduleService {
     public ScheduleResponse reschedulePost(Long scheduleId, Long postId, ReschedulePostRequest request) {
         ScheduleEvent event = getOwnedEvent(scheduleId);
         Post post = getOwnedPostInSchedule(event, postId);
+        requireWaitingPost(post);
         post.setScheduledAt(request.scheduledAt());
         post.setStatus(PostStatus.PENDING);
+        postRepository.save(post);
+        return toScheduleResponse(event);
+    }
+
+    @Transactional
+    public ScheduleResponse detachPost(Long scheduleId, Long postId) {
+        ScheduleEvent event = getOwnedEvent(scheduleId);
+        Post post = getOwnedPostInSchedule(event, postId);
+        requireWaitingPost(post);
+        post.setScheduleEventId(null);
+        post.setScheduledAt(null);
+        post.setTimeOverride(null);
+        post.setSortOrder(0);
+        post.setStatus(PostStatus.DRAFT);
+        post.setErrorMessage(null);
+        post.setRetryCount(0);
+        post.setLastRetryAt(null);
+        postRepository.save(post);
+        return toScheduleResponse(event);
+    }
+
+    @Transactional
+    public ScheduleResponse setPostTimeOverride(Long scheduleId, Long postId, PostTimeOverrideRequest request) {
+        ScheduleEvent event = getOwnedEvent(scheduleId);
+        Post post = getOwnedPostInSchedule(event, postId);
+        requireWaitingPost(post);
+        post.setTimeOverride(request.timeOverride());
+        post.setScheduledAt(scheduledAtForIndex(event, post.getSortOrder(), request.timeOverride()));
+        post.setStatus(PostStatus.PENDING);
+        post.setErrorMessage(null);
+        post.setRetryCount(0);
+        post.setLastRetryAt(null);
         postRepository.save(post);
         return toScheduleResponse(event);
     }
@@ -346,8 +377,8 @@ public class ScheduleService {
             Post post = postRepository
                     .findByIdAndOrganizationIdAndUserId(item.postId(), user.organizationId(), user.userId())
                     .orElseThrow(() -> new ResourceNotFoundException("Post", item.postId()));
-            if (post.getStatus() == PostStatus.POSTED) {
-                throw new BusinessException("Post " + post.getId() + " is already published.");
+            if (post.getStatus() != PostStatus.DRAFT) {
+                throw new BusinessException("Only draft posts can be added to a schedule.");
             }
             post.setScheduledAt(computeScheduledAt(event, item, i));
             post.setScheduleEventId(event.getId());
@@ -364,16 +395,28 @@ public class ScheduleService {
         event.setName(request.name().trim());
         event.setDescription(blankToNull(request.description()));
         event.setColor(blankToDefault(request.color(), "#4f46e5"));
-        SocialIntegration targetAccount = integrationRepository
-                .findByIdAndOrganizationIdAndUserId(
-                        request.socialIntegrationId(), event.getOrganizationId(), event.getUserId())
-                .orElseThrow(() -> new BusinessException("That page/account is not connected or not yours."));
-        if (targetAccount.getPlatform() != request.targetPlatform()) {
-            throw new BusinessException("Selected account does not belong to " + request.targetPlatform() + ".");
+        SocialPlatform targetPlatform = request.targetPlatform();
+        Long socialIntegrationId = null;
+        if (request.socialIntegrationId() != null) {
+            SocialIntegration targetAccount = integrationRepository
+                    .findByIdAndOrganizationIdAndUserId(
+                            request.socialIntegrationId(), event.getOrganizationId(), event.getUserId())
+                    .orElseThrow(() -> new BusinessException("That page/account is not connected or not yours."));
+            if (targetPlatform != null && targetAccount.getPlatform() != targetPlatform) {
+                throw new BusinessException("Selected account does not belong to " + targetPlatform + ".");
+            }
+            targetPlatform = targetAccount.getPlatform();
+            socialIntegrationId = targetAccount.getId();
         }
-        event.setTargetPlatform(request.targetPlatform());
-        event.setSocialIntegrationId(targetAccount.getId());
-        event.setPlatforms(request.targetPlatform().name());
+        if (targetPlatform == null) {
+            targetPlatform = firstPostPlatform(request.posts());
+        }
+        List<SocialPlatform> platforms = request.platforms() != null && !request.platforms().isEmpty()
+                ? request.platforms()
+                : platformsFromPosts(request.posts(), targetPlatform);
+        event.setTargetPlatform(targetPlatform);
+        event.setSocialIntegrationId(socialIntegrationId);
+        event.setPlatforms(joinPlatforms(platforms));
         event.setStatus(normalizeStatus(request.status()));
         event.setScheduleType(request.scheduleType());
         event.setDaysOfWeek(joinStrings(request.daysOfWeek()));
@@ -406,7 +449,9 @@ public class ScheduleService {
                 post = postRepository
                         .findByIdAndOrganizationIdAndUserId(request.id(), user.organizationId(), user.userId())
                         .orElseThrow(() -> new ResourceNotFoundException("Post", request.id()));
-                if (post.getScheduleEventId() != null && !post.getScheduleEventId().equals(event.getId())) {
+                if (post.getStatus() == PostStatus.POSTED) {
+                    post = clonePostedPost(post);
+                } else if (post.getScheduleEventId() != null && !post.getScheduleEventId().equals(event.getId())) {
                     throw new BusinessException("Post " + request.id() + " belongs to another schedule.");
                 }
             }
@@ -414,6 +459,8 @@ public class ScheduleService {
                 post = new Post();
                 post.setOrganizationId(event.getOrganizationId());
                 post.setUserId(event.getUserId());
+            } else if (post.getStatus() == PostStatus.POSTED) {
+                post = clonePostedPost(post);
             }
             applyPostRequest(event, post, request, i);
             Post saved = postRepository.save(post);
@@ -422,8 +469,7 @@ public class ScheduleService {
         for (Post post : existing.values()) {
             if (!retained.contains(post.getId())) {
                 if (post.getStatus() == PostStatus.POSTED) {
-                    post.setScheduleEventId(null);
-                    postRepository.save(post);
+                    continue;
                 } else {
                     postRepository.delete(post);
                 }
@@ -436,8 +482,8 @@ public class ScheduleService {
         post.setSortOrder(request.sortOrder() != null ? request.sortOrder() : index);
         post.setTitle(blankToNull(request.title()));
         post.setContent(blankToNull(request.caption()));
-        post.setPlatform(schedulePlatform(event));
-        post.setSocialIntegrationId(event.getSocialIntegrationId());
+        post.setPlatform(request.platform() != null ? request.platform() : schedulePlatform(event));
+        post.setSocialIntegrationId(resolvePostAccount(request.socialIntegrationId(), post));
         post.setScheduledAt(scheduledAtForIndex(event, index, request.timeOverride()));
         post.setMediaUrl(blankToNull(request.mediaUrl()));
         post.setMediaType(mediaUrlValidator.validate(post.getMediaUrl()));
@@ -456,6 +502,7 @@ public class ScheduleService {
             if (post.getSocialIntegrationId() == null) {
                 throw new BusinessException("Select a target page/account before scheduling a post.");
             }
+            validatePostAccountMatchesPlatform(post);
         }
         if (status == PostStatus.POSTED && post.getPublishedAt() == null) {
             throw new BusinessException("Use publish-now or the scheduler to publish a post.");
@@ -635,6 +682,95 @@ public class ScheduleService {
             throw new BusinessException("Post " + post.getId() + " needs a target page/account before it can be scheduled.");
         }
         return PostStatus.PENDING;
+    }
+
+    private void requireWaitingPost(Post post) {
+        if (post.getStatus() == PostStatus.POSTED) {
+            throw new BusinessException("Posted posts are history and cannot be changed from the schedule.");
+        }
+        if (post.getStatus() == PostStatus.PROCESSING) {
+            throw new BusinessException("A post currently publishing cannot be changed.");
+        }
+    }
+
+    private void applyScheduleTarget(ScheduleEvent event, Post post) {
+        if (event.getSocialIntegrationId() != null) {
+            post.setPlatform(schedulePlatform(event));
+            post.setSocialIntegrationId(event.getSocialIntegrationId());
+            return;
+        }
+        if (post.getSocialIntegrationId() != null) {
+            if (post.getPlatform() == null) {
+                post.setPlatform(schedulePlatform(event));
+            }
+            return;
+        }
+        if (event.getTargetPlatform() != null) {
+            post.setPlatform(event.getTargetPlatform());
+        }
+    }
+
+    private Long resolvePostAccount(Long requestedAccountId, Post post) {
+        if (requestedAccountId == null) {
+            return post.getSocialIntegrationId();
+        }
+        SocialIntegration account = integrationRepository
+                .findByIdAndOrganizationIdAndUserId(
+                        requestedAccountId, post.getOrganizationId(), post.getUserId())
+                .orElseThrow(() -> new BusinessException("That page/account is not connected or not yours."));
+        if (post.getPlatform() == null) {
+            post.setPlatform(account.getPlatform());
+        }
+        if (post.getPlatform() != account.getPlatform()) {
+            throw new BusinessException("Selected account does not belong to " + post.getPlatform() + ".");
+        }
+        return account.getId();
+    }
+
+    private void validatePostAccountMatchesPlatform(Post post) {
+        if (post.getSocialIntegrationId() == null) {
+            return;
+        }
+        SocialIntegration account = integrationRepository
+                .findByIdAndOrganizationIdAndUserId(
+                        post.getSocialIntegrationId(), post.getOrganizationId(), post.getUserId())
+                .orElseThrow(() -> new BusinessException("That page/account is not connected or not yours."));
+        if (post.getPlatform() == null) {
+            post.setPlatform(account.getPlatform());
+            return;
+        }
+        if (account.getPlatform() != post.getPlatform()) {
+            throw new BusinessException("Selected account does not belong to " + post.getPlatform() + ".");
+        }
+    }
+
+    private SocialPlatform firstPostPlatform(List<SchedulePostRequest> posts) {
+        if (posts == null) {
+            return null;
+        }
+        return posts.stream()
+                .map(SchedulePostRequest::platform)
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private List<SocialPlatform> platformsFromPosts(List<SchedulePostRequest> posts, SocialPlatform fallback) {
+        List<SocialPlatform> platforms = posts == null
+                ? new ArrayList<>()
+                : posts.stream()
+                        .map(SchedulePostRequest::platform)
+                        .filter(Objects::nonNull)
+                        .distinct()
+                        .toList();
+        if (!platforms.isEmpty()) {
+            return platforms;
+        }
+        return fallback != null ? List.of(fallback) : List.of(SocialPlatform.FACEBOOK);
+    }
+
+    private String joinPlatforms(List<SocialPlatform> platforms) {
+        return joinEnums(platforms == null || platforms.isEmpty() ? List.of(SocialPlatform.FACEBOOK) : platforms);
     }
 
     private SocialPlatform schedulePlatform(ScheduleEvent event) {
@@ -926,6 +1062,24 @@ public class ScheduleService {
         target.setCta(source.getCta());
         target.setTimeOverride(source.getTimeOverride());
         target.setSortOrder(source.getSortOrder());
+    }
+
+    private Post clonePostedPost(Post source) {
+        Post clone = new Post();
+        copyPostFields(source, clone);
+        clone.setOrganizationId(source.getOrganizationId());
+        clone.setUserId(source.getUserId());
+        clone.setScheduleEventId(null);
+        clone.setScheduledAt(null);
+        clone.setTimeOverride(null);
+        clone.setStatus(PostStatus.DRAFT);
+        clone.setPublishedAt(null);
+        clone.setExternalPostId(null);
+        clone.setPublishResponseSummary(null);
+        clone.setErrorMessage(null);
+        clone.setRetryCount(0);
+        clone.setLastRetryAt(null);
+        return clone;
     }
 
     private ScheduleNotifications notifications(ScheduleNotifications value) {

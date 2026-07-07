@@ -2,6 +2,7 @@ package com.socialhub.socialhubBackend.schedule.web;
 
 import com.socialhub.socialhubBackend.common.response.ApiResponse;
 import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.AttachExistingPostsRequest;
+import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.PostTimeOverrideRequest;
 import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.QuickPostActionRequest;
 import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.ReschedulePostRequest;
 import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.ScheduleRequest;
@@ -101,6 +102,23 @@ public class ScheduleController {
             @PathVariable Long postId,
             @Valid @RequestBody ReschedulePostRequest request) {
         return ApiResponse.ok(scheduleService.reschedulePost(scheduleId, postId, request), "Post rescheduled");
+    }
+
+    @DeleteMapping("/{scheduleId}/posts/{postId}")
+    @Operation(summary = "Detach a waiting post from a schedule")
+    public ApiResponse<ScheduleResponse> detachPost(
+            @PathVariable Long scheduleId,
+            @PathVariable Long postId) {
+        return ApiResponse.ok(scheduleService.detachPost(scheduleId, postId), "Post removed from schedule");
+    }
+
+    @PostMapping("/{scheduleId}/posts/{postId}/time-override")
+    @Operation(summary = "Set or clear a post-specific schedule time override")
+    public ApiResponse<ScheduleResponse> timeOverride(
+            @PathVariable Long scheduleId,
+            @PathVariable Long postId,
+            @Valid @RequestBody PostTimeOverrideRequest request) {
+        return ApiResponse.ok(scheduleService.setPostTimeOverride(scheduleId, postId, request), "Post time updated");
     }
 
     @GetMapping("/templates")

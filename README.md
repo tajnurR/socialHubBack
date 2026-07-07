@@ -111,6 +111,11 @@ The single-post Add Post flow now supports media-library-backed drafts:
 
 - `POST /api/v1/posts` accepts an optional `mediaAssetId` in addition to the
   existing `mediaUrl`.
+- The frontend can create multiple account-specific drafts from one form submit
+  by calling this single-post endpoint once per selected platform/account
+  combination. Each saved row keeps its own `platform` and `socialIntegrationId`,
+  so post list, scheduling, and publishing continue to operate on one concrete
+  account target at a time.
 - When `mediaAssetId` is supplied, the backend verifies ownership of the
   referenced `media_assets` row, links it through `posts.media_asset_id`, and
   mirrors the resolved Drive URL and media type onto the post for publish-time
@@ -146,11 +151,18 @@ media bytes instead of publishing Google Drive links:
 
 - Scheduling a draft saves `scheduledAt`, keeps the selected Facebook page on
   the post, and moves status to `PENDING`.
-- Rich schedules store a schedule-level target platform and connected account.
-  Linked posts inherit that target, and the backend computes sequential
-  `scheduledAt` values from the schedule type and post order. Custom schedules
-  use `custom_interval_hours` (1-24) so selected posts publish one by one every
-  N hours instead of all at the same timestamp.
+- Rich schedules no longer require a schedule-level connected account. Each post
+  keeps the platform/account chosen during Add Post, and the backend computes
+  sequential `scheduledAt` values from the schedule type and post order. Custom
+  schedules use `custom_interval_hours` (1-24) so selected posts publish one by
+  one every N hours instead of all at the same timestamp.
+- Schedule create/update is configuration-only. Posts are attached from the Add
+  Post list, and only unscheduled `DRAFT` posts can be attached. Posted posts are
+  preserved as immutable history; `POST /api/v1/posts/{id}/clone` clones a
+  `POSTED` post into a new `DRAFT` row before it can be scheduled again.
+- Schedule post actions include detaching a waiting post without deleting it and
+  setting/clearing a per-post time override while leaving the schedule default
+  posting time unchanged.
 - The scheduler runs every minute (`SCHEDULED_PUBLISHER_POLL_INTERVAL_MS`,
   default `60000`) and claims due posts where `scheduledAt <= now` and status
   is `PENDING`.

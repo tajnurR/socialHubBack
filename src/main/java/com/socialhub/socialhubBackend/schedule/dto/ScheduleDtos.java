@@ -67,9 +67,9 @@ public final class ScheduleDtos {
             @NotBlank String name,
             String description,
             String color,
-            @NotEmpty List<SocialPlatform> platforms,
-            @NotNull SocialPlatform targetPlatform,
-            @NotNull Long socialIntegrationId,
+            List<SocialPlatform> platforms,
+            SocialPlatform targetPlatform,
+            Long socialIntegrationId,
             @NotBlank String status,
             @NotBlank String scheduleType,
             List<String> daysOfWeek,
@@ -147,6 +147,8 @@ public final class ScheduleDtos {
     public record QuickPostActionRequest(@NotBlank String action) {}
 
     public record ReschedulePostRequest(@NotNull Instant scheduledAt) {}
+
+    public record PostTimeOverrideRequest(LocalTime timeOverride) {}
 
     public record ScheduleTemplateRequest(
             @NotBlank String name,

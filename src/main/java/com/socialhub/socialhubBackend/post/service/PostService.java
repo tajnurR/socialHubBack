@@ -227,6 +227,40 @@ public class PostService {
         return postMapper.toResponse(publishingWorkflow.retryNow(id, user.organizationId(), user.userId()));
     }
 
+    @Transactional
+    public PostResponse clonePosted(Long id) {
+        Post source = getOwned(id);
+        if (source.getStatus() != PostStatus.POSTED) {
+            throw new BusinessException("Only posted posts can be cloned.");
+        }
+        Post clone = new Post();
+        clone.setOrganizationId(source.getOrganizationId());
+        clone.setUserId(source.getUserId());
+        clone.setSocialIntegrationId(source.getSocialIntegrationId());
+        clone.setPlatform(source.getPlatform());
+        clone.setContent(source.getContent());
+        clone.setTitle(source.getTitle());
+        clone.setLink(source.getLink());
+        clone.setMediaUrl(source.getMediaUrl());
+        clone.setMediaAssetId(source.getMediaAssetId());
+        clone.setMediaType(source.getMediaType());
+        clone.setHashtags(source.getHashtags());
+        clone.setCta(source.getCta());
+        clone.setProductId(source.getProductId());
+        clone.setStatus(PostStatus.DRAFT);
+        clone.setScheduledAt(null);
+        clone.setTimeOverride(null);
+        clone.setScheduleEventId(null);
+        clone.setSortOrder(0);
+        clone.setExternalPostId(null);
+        clone.setPublishedAt(null);
+        clone.setPublishResponseSummary(null);
+        clone.setErrorMessage(null);
+        clone.setRetryCount(0);
+        clone.setLastRetryAt(null);
+        return postMapper.toResponse(postRepository.save(clone));
+    }
+
     /** Ownership-checked fetch (404 if not the current user's). */
     public Post getOwned(Long id) {
         CurrentUser user = currentUserProvider.currentUser();

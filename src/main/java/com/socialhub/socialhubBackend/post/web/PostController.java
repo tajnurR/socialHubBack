@@ -117,4 +117,10 @@ public class PostController {
     public ApiResponse<PostResponse> retry(@PathVariable Long id) {
         return ApiResponse.ok(postService.retryNow(id), "Post retried");
     }
+
+    @PostMapping("/{id}/clone")
+    @Operation(summary = "Clone a published post into a new draft")
+    public ApiResponse<PostResponse> clone(@PathVariable Long id) {
+        return ApiResponse.ok(postService.clonePosted(id), "Post cloned");
+    }
 }
