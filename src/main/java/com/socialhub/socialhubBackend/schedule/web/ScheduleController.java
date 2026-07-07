@@ -1,6 +1,7 @@
 package com.socialhub.socialhubBackend.schedule.web;
 
 import com.socialhub.socialhubBackend.common.response.ApiResponse;
+import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.AttachExistingPostsRequest;
 import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.QuickPostActionRequest;
 import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.ReschedulePostRequest;
 import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.ScheduleRequest;
@@ -76,6 +77,14 @@ public class ScheduleController {
         return ApiResponse.ok(scheduleService.togglePause(id), "Schedule updated");
     }
 
+    @PostMapping("/{id}/posts")
+    @Operation(summary = "Append existing owned posts to a schedule")
+    public ApiResponse<ScheduleResponse> attachPosts(
+            @PathVariable Long id,
+            @Valid @RequestBody AttachExistingPostsRequest request) {
+        return ApiResponse.ok(scheduleService.attachExistingPosts(id, request), "Posts added to schedule");
+    }
+
     @PostMapping("/{scheduleId}/posts/{postId}/quick-action")
     @Operation(summary = "Apply a quick reschedule/skip/retry action to a schedule post")
     public ApiResponse<ScheduleResponse> quickAction(
@@ -107,4 +116,3 @@ public class ScheduleController {
         return ApiResponse.ok(scheduleService.createTemplate(request), "Schedule template saved");
     }
 }
-

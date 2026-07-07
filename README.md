@@ -146,6 +146,11 @@ media bytes instead of publishing Google Drive links:
 
 - Scheduling a draft saves `scheduledAt`, keeps the selected Facebook page on
   the post, and moves status to `PENDING`.
+- Rich schedules store a schedule-level target platform and connected account.
+  Linked posts inherit that target, and the backend computes sequential
+  `scheduledAt` values from the schedule type and post order. Custom schedules
+  use `custom_interval_hours` (1-24) so selected posts publish one by one every
+  N hours instead of all at the same timestamp.
 - The scheduler runs every minute (`SCHEDULED_PUBLISHER_POLL_INTERVAL_MS`,
   default `60000`) and claims due posts where `scheduledAt <= now` and status
   is `PENDING`.

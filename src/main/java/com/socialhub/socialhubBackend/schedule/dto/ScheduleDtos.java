@@ -30,6 +30,9 @@ public final class ScheduleDtos {
 
     public record AttachPostsRequest(@NotEmpty List<ScheduledPostInput> items) {}
 
+    /** Existing post ids to append to a rich schedule from the post-management list. */
+    public record AttachExistingPostsRequest(@NotEmpty List<@NotNull Long> postIds) {}
+
     public record ScheduleEventResponse(
             Long id,
             String name,
@@ -65,6 +68,8 @@ public final class ScheduleDtos {
             String description,
             String color,
             @NotEmpty List<SocialPlatform> platforms,
+            @NotNull SocialPlatform targetPlatform,
+            @NotNull Long socialIntegrationId,
             @NotBlank String status,
             @NotBlank String scheduleType,
             List<String> daysOfWeek,
@@ -72,6 +77,7 @@ public final class ScheduleDtos {
             @NotBlank String timezone,
             @NotNull LocalDate startDate,
             LocalDate endDate,
+            Integer customIntervalHours,
             Integer dailyPostLimit,
             ScheduleNotifications notifications,
             @Valid List<SchedulePostRequest> posts) {}
@@ -103,6 +109,9 @@ public final class ScheduleDtos {
             String description,
             String color,
             List<SocialPlatform> platforms,
+            SocialPlatform targetPlatform,
+            Long socialIntegrationId,
+            String targetAccountName,
             String status,
             String scheduleType,
             List<String> daysOfWeek,
@@ -110,6 +119,7 @@ public final class ScheduleDtos {
             String timezone,
             LocalDate startDate,
             LocalDate endDate,
+            Integer customIntervalHours,
             Integer dailyPostLimit,
             ScheduleNotifications notifications,
             List<Long> linkedPostIds,
@@ -164,4 +174,3 @@ public final class ScheduleDtos {
             ScheduleNotifications notifications,
             Instant createdAt) {}
 }
-

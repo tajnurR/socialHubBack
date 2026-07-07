@@ -3,6 +3,7 @@ package com.socialhub.socialhubBackend.schedule.service;
 import com.socialhub.socialhubBackend.common.exception.BusinessException;
 import com.socialhub.socialhubBackend.common.exception.ResourceNotFoundException;
 import com.socialhub.socialhubBackend.integration.core.SocialPlatform;
+import com.socialhub.socialhubBackend.integration.core.domain.SocialIntegration;
 import com.socialhub.socialhubBackend.integration.core.repository.SocialIntegrationRepository;
 import com.socialhub.socialhubBackend.post.domain.Post;
 import com.socialhub.socialhubBackend.post.domain.PostStatus;
@@ -13,6 +14,7 @@ import com.socialhub.socialhubBackend.schedule.domain.ScheduleEvent;
 import com.socialhub.socialhubBackend.schedule.domain.ScheduleMode;
 import com.socialhub.socialhubBackend.schedule.domain.ScheduleTemplate;
 import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.AttachPostsRequest;
+import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.AttachExistingPostsRequest;
 import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.BestTimeSuggestion;
 import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.ConflictWarning;
 import com.socialhub.socialhubBackend.schedule.dto.ScheduleDtos.EngagementSummary;
@@ -146,9 +148,12 @@ public class ScheduleService {
         copy.setDescription(source.getDescription());
         copy.setColor(source.getColor());
         copy.setPlatforms(source.getPlatforms());
+        copy.setTargetPlatform(source.getTargetPlatform());
+        copy.setSocialIntegrationId(source.getSocialIntegrationId());
         copy.setMode(source.getMode());
         copy.setStartTime(source.getStartTime());
         copy.setIntervalHours(source.getIntervalHours());
+        copy.setCustomIntervalHours(source.getCustomIntervalHours());
         copy.setStatus("draft");
         copy.setScheduleType(source.getScheduleType());
         copy.setDaysOfWeek(source.getDaysOfWeek());
@@ -187,6 +192,47 @@ public class ScheduleService {
             }
         }
         return toScheduleResponse(eventRepository.save(event));
+    }
+
+    @Transactional
+    public ScheduleResponse attachExistingPosts(Long id, AttachExistingPostsRequest request) {
+        ScheduleEvent event = getOwnedEvent(id);
+        List<Long> postIds = request.postIds().stream().distinct().toList();
+        if (postIds.isEmpty()) {
+            throw new BusinessException("Select at least one post to add to the schedule.");
+        }
+
+        List<Post> existingPosts = postsFor(event);
+        int nextSortOrder = existingPosts.stream()
+                .mapToInt(Post::getSortOrder)
+                .max()
+                .orElse(-1) + 1;
+        Instant nextSlot = nextAppendSlot(event, existingPosts);
+
+        CurrentUser user = currentUserProvider.currentUser();
+        for (Long postId : postIds) {
+            Post post = postRepository
+                    .findByIdAndOrganizationIdAndUserId(postId, user.organizationId(), user.userId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Post", postId));
+            if (post.getStatus() == PostStatus.POSTED) {
+                throw new BusinessException("Post " + post.getId() + " is already published.");
+            }
+            if (post.getStatus() == PostStatus.PROCESSING) {
+                throw new BusinessException("Post " + post.getId() + " is currently publishing.");
+            }
+            post.setScheduleEventId(event.getId());
+            post.setSortOrder(nextSortOrder++);
+            post.setScheduledAt(nextSlot);
+            post.setPlatform(schedulePlatform(event));
+            post.setSocialIntegrationId(event.getSocialIntegrationId());
+            post.setStatus(statusForAttachedPost(event, post));
+            post.setErrorMessage(null);
+            post.setRetryCount(0);
+            post.setLastRetryAt(null);
+            postRepository.save(post);
+            nextSlot = nextSlotAfter(event, nextSlot);
+        }
+        return toScheduleResponse(event);
     }
 
     @Transactional
@@ -286,6 +332,8 @@ public class ScheduleService {
         event.setTimezone("Asia/Dhaka");
         event.setStartDate(LocalDate.now());
         event.setPlatforms(SocialPlatform.FACEBOOK.name());
+        event.setTargetPlatform(SocialPlatform.FACEBOOK);
+        event.setCustomIntervalHours(request.intervalHours());
         return toEventResponse(eventRepository.save(event));
     }
 
@@ -316,7 +364,16 @@ public class ScheduleService {
         event.setName(request.name().trim());
         event.setDescription(blankToNull(request.description()));
         event.setColor(blankToDefault(request.color(), "#4f46e5"));
-        event.setPlatforms(joinEnums(request.platforms()));
+        SocialIntegration targetAccount = integrationRepository
+                .findByIdAndOrganizationIdAndUserId(
+                        request.socialIntegrationId(), event.getOrganizationId(), event.getUserId())
+                .orElseThrow(() -> new BusinessException("That page/account is not connected or not yours."));
+        if (targetAccount.getPlatform() != request.targetPlatform()) {
+            throw new BusinessException("Selected account does not belong to " + request.targetPlatform() + ".");
+        }
+        event.setTargetPlatform(request.targetPlatform());
+        event.setSocialIntegrationId(targetAccount.getId());
+        event.setPlatforms(request.targetPlatform().name());
         event.setStatus(normalizeStatus(request.status()));
         event.setScheduleType(request.scheduleType());
         event.setDaysOfWeek(joinStrings(request.daysOfWeek()));
@@ -324,6 +381,7 @@ public class ScheduleService {
         event.setTimezone(blankToDefault(request.timezone(), "Asia/Dhaka"));
         event.setStartDate(request.startDate());
         event.setEndDate(request.endDate());
+        event.setCustomIntervalHours(validCustomInterval(request.customIntervalHours()));
         event.setDailyPostLimit(request.dailyPostLimit());
         ScheduleNotifications notifications = notifications(request.notifications());
         event.setNotifySuccess(notifications.publishSuccess());
@@ -331,7 +389,7 @@ public class ScheduleService {
         event.setNotifyNextReminder(notifications.nextPostReminder());
         event.setMode("custom".equals(request.scheduleType()) ? ScheduleMode.INTERVAL : ScheduleMode.EXPLICIT);
         event.setStartTime(atEventZone(request.startDate(), request.postingTime(), event));
-        event.setIntervalHours("daily".equals(request.scheduleType()) ? 24 : null);
+        event.setIntervalHours("custom".equals(request.scheduleType()) ? event.getCustomIntervalHours() : null);
     }
 
     private void syncPosts(ScheduleEvent event, List<SchedulePostRequest> requests) {
@@ -378,23 +436,15 @@ public class ScheduleService {
         post.setSortOrder(request.sortOrder() != null ? request.sortOrder() : index);
         post.setTitle(blankToNull(request.title()));
         post.setContent(blankToNull(request.caption()));
-        post.setPlatform(request.platform());
-        post.setScheduledAt(request.scheduledAt() != null
-                ? request.scheduledAt()
-                : atEventZone(event.getStartDate().plusDays(index), event.getPostingTime(), event));
+        post.setPlatform(schedulePlatform(event));
+        post.setSocialIntegrationId(event.getSocialIntegrationId());
+        post.setScheduledAt(scheduledAtForIndex(event, index, request.timeOverride()));
         post.setMediaUrl(blankToNull(request.mediaUrl()));
         post.setMediaType(mediaUrlValidator.validate(post.getMediaUrl()));
         post.setLink(blankToNull(request.link()));
         post.setHashtags(joinStrings(request.hashtags()));
         post.setCta(blankToNull(request.cta()));
         post.setTimeOverride(request.timeOverride());
-        if (request.socialIntegrationId() != null) {
-            integrationRepository
-                    .findByIdAndOrganizationIdAndUserId(
-                            request.socialIntegrationId(), event.getOrganizationId(), event.getUserId())
-                    .orElseThrow(() -> new BusinessException("That page is not connected or not yours."));
-        }
-        post.setSocialIntegrationId(request.socialIntegrationId());
         PostStatus status = effectivePostStatus(event, request);
         if (status == PostStatus.PENDING || status == PostStatus.SCHEDULED) {
             if (post.getScheduledAt() == null) {
@@ -464,6 +514,9 @@ public class ScheduleService {
                 event.getDescription(),
                 event.getColor(),
                 parsePlatforms(event.getPlatforms()),
+                schedulePlatform(event),
+                event.getSocialIntegrationId(),
+                targetAccountName(event),
                 normalizeStatus(event.getStatus()),
                 blankToDefault(event.getScheduleType(), "one-time"),
                 split(event.getDaysOfWeek()),
@@ -471,6 +524,7 @@ public class ScheduleService {
                 blankToDefault(event.getTimezone(), "Asia/Dhaka"),
                 event.getStartDate(),
                 event.getEndDate(),
+                event.getCustomIntervalHours(),
                 event.getDailyPostLimit(),
                 new ScheduleNotifications(event.isNotifySuccess(), event.isNotifyFailure(), event.isNotifyNextReminder()),
                 posts.stream().map(Post::getId).toList(),
@@ -561,6 +615,136 @@ public class ScheduleService {
         return eventRepository
                 .findByIdAndOrganizationIdAndUserId(id, user.organizationId(), user.userId())
                 .orElseThrow(() -> new ResourceNotFoundException("Schedule", id));
+    }
+
+    private PostStatus statusForAttachedPost(ScheduleEvent event, Post post) {
+        String scheduleStatus = normalizeStatus(event.getStatus());
+        if ("draft".equals(scheduleStatus)) {
+            return PostStatus.DRAFT;
+        }
+        if ("paused".equals(scheduleStatus)) {
+            return PostStatus.PAUSED;
+        }
+        if (!"active".equals(scheduleStatus)) {
+            return PostStatus.DRAFT;
+        }
+        if (post.getContent() == null || post.getContent().isBlank()) {
+            throw new BusinessException("Post " + post.getId() + " needs content before it can be scheduled.");
+        }
+        if (post.getSocialIntegrationId() == null) {
+            throw new BusinessException("Post " + post.getId() + " needs a target page/account before it can be scheduled.");
+        }
+        return PostStatus.PENDING;
+    }
+
+    private SocialPlatform schedulePlatform(ScheduleEvent event) {
+        if (event.getTargetPlatform() != null) {
+            return event.getTargetPlatform();
+        }
+        return parsePlatforms(event.getPlatforms()).stream().findFirst().orElse(SocialPlatform.FACEBOOK);
+    }
+
+    private String targetAccountName(ScheduleEvent event) {
+        if (event.getSocialIntegrationId() == null) {
+            return null;
+        }
+        return integrationRepository
+                .findByIdAndOrganizationIdAndUserId(
+                        event.getSocialIntegrationId(), event.getOrganizationId(), event.getUserId())
+                .map(SocialIntegration::getDisplayName)
+                .orElse(null);
+    }
+
+    private int validCustomInterval(Integer value) {
+        if (value == null) {
+            return 1;
+        }
+        if (value < 1 || value > 24) {
+            throw new BusinessException("Custom interval must be between 1 and 24 hours.");
+        }
+        return value;
+    }
+
+    private Instant scheduledAtForIndex(ScheduleEvent event, int index, LocalTime overrideTime) {
+        LocalDate startDate = event.getStartDate() != null ? event.getStartDate() : LocalDate.now(zone(event));
+        LocalTime time = overrideTime != null ? overrideTime : defaultPostingTime(event);
+        String type = blankToDefault(event.getScheduleType(), "one-time");
+        return switch (type) {
+            case "daily" -> atEventZone(startDate.plusDays(index), time, event);
+            case "weekly" -> weeklySlot(event, startDate, time, index);
+            case "monthly" -> atEventZone(startDate.plusMonths(index), time, event);
+            case "custom" -> atEventZone(startDate, time, event)
+                    .plus((long) validCustomInterval(event.getCustomIntervalHours()) * index, ChronoUnit.HOURS);
+            default -> atEventZone(startDate, time, event).plus(index, ChronoUnit.HOURS);
+        };
+    }
+
+    private Instant weeklySlot(ScheduleEvent event, LocalDate startDate, LocalTime time, int index) {
+        List<java.time.DayOfWeek> selectedDays = split(event.getDaysOfWeek()).stream()
+                .map(this::dayOfWeek)
+                .filter(Objects::nonNull)
+                .sorted()
+                .toList();
+        if (selectedDays.isEmpty()) {
+            return atEventZone(startDate.plusWeeks(index), time, event);
+        }
+        LocalDate cursor = startDate;
+        int remaining = index;
+        while (true) {
+            if (!cursor.isBefore(startDate) && selectedDays.contains(cursor.getDayOfWeek())) {
+                if (remaining == 0) {
+                    return atEventZone(cursor, time, event);
+                }
+                remaining--;
+            }
+            cursor = cursor.plusDays(1);
+        }
+    }
+
+    private java.time.DayOfWeek dayOfWeek(String value) {
+        return switch (value.toLowerCase()) {
+            case "mon", "monday" -> java.time.DayOfWeek.MONDAY;
+            case "tue", "tuesday" -> java.time.DayOfWeek.TUESDAY;
+            case "wed", "wednesday" -> java.time.DayOfWeek.WEDNESDAY;
+            case "thu", "thursday" -> java.time.DayOfWeek.THURSDAY;
+            case "fri", "friday" -> java.time.DayOfWeek.FRIDAY;
+            case "sat", "saturday" -> java.time.DayOfWeek.SATURDAY;
+            case "sun", "sunday" -> java.time.DayOfWeek.SUNDAY;
+            default -> null;
+        };
+    }
+
+    private Instant nextAppendSlot(ScheduleEvent event, List<Post> existingPosts) {
+        Instant lastScheduled = existingPosts.stream()
+                .map(Post::getScheduledAt)
+                .filter(Objects::nonNull)
+                .max(Comparator.naturalOrder())
+                .orElse(null);
+        Instant slot = lastScheduled == null ? firstScheduleSlot(event) : nextSlotAfter(event, lastScheduled);
+        Instant now = Instant.now();
+        while (slot.isBefore(now)) {
+            slot = nextSlotAfter(event, slot);
+        }
+        return slot;
+    }
+
+    private Instant firstScheduleSlot(ScheduleEvent event) {
+        if (event.getMode() == ScheduleMode.INTERVAL && event.getStartTime() != null) {
+            return event.getStartTime();
+        }
+        LocalDate startDate = event.getStartDate() != null ? event.getStartDate() : LocalDate.now(zone(event));
+        return atEventZone(startDate, defaultPostingTime(event), event);
+    }
+
+    private Instant nextSlotAfter(ScheduleEvent event, Instant slot) {
+        String type = blankToDefault(event.getScheduleType(), "one-time");
+        return switch (type) {
+            case "daily" -> slot.atZone(zone(event)).plusDays(1).toInstant();
+            case "weekly" -> slot.atZone(zone(event)).plusWeeks(1).toInstant();
+            case "monthly" -> slot.atZone(zone(event)).plusMonths(1).toInstant();
+            case "custom" -> slot.plus(validCustomInterval(event.getCustomIntervalHours()), ChronoUnit.HOURS);
+            default -> slot.plus(1, ChronoUnit.HOURS);
+        };
     }
 
     private Post getOwnedPostInSchedule(ScheduleEvent event, Long postId) {

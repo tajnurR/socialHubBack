@@ -1,6 +1,7 @@
 package com.socialhub.socialhubBackend.schedule.domain;
 
 import com.socialhub.socialhubBackend.common.entity.TenantBaseEntity;
+import com.socialhub.socialhubBackend.integration.core.SocialPlatform;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -39,6 +40,13 @@ public class ScheduleEvent extends TenantBaseEntity {
     private String platforms;
 
     @Enumerated(EnumType.STRING)
+    @Column(name = "target_platform", length = 30)
+    private SocialPlatform targetPlatform;
+
+    @Column(name = "social_integration_id")
+    private Long socialIntegrationId;
+
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private ScheduleMode mode;
 
@@ -49,6 +57,9 @@ public class ScheduleEvent extends TenantBaseEntity {
     /** Hours between posts for INTERVAL mode. */
     @Column(name = "interval_hours")
     private Integer intervalHours;
+
+    @Column(name = "custom_interval_hours")
+    private Integer customIntervalHours;
 
     @Column(nullable = false, length = 20)
     private String status = "active";
