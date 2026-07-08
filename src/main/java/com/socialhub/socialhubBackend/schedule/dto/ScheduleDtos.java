@@ -91,6 +91,7 @@ public final class ScheduleDtos {
             Instant scheduledAt,
             PostStatus status,
             Long socialIntegrationId,
+            String targetAccountName,
             Long mediaAssetId,
             PostMediaType mediaType,
             String thumbnailUrl,
@@ -99,6 +100,7 @@ public final class ScheduleDtos {
             List<String> hashtags,
             String cta,
             LocalTime timeOverride,
+            Instant scheduledAtOverride,
             Instant publishedAt,
             String externalPostId,
             String errorMessage,
@@ -152,7 +154,7 @@ public final class ScheduleDtos {
 
     public record ReschedulePostRequest(@NotNull Instant scheduledAt) {}
 
-    public record PostTimeOverrideRequest(LocalTime timeOverride) {}
+    public record PostTimeOverrideRequest(Instant scheduledAtOverride, LocalTime timeOverride) {}
 
     public record ScheduleTemplateRequest(
             @NotBlank String name,

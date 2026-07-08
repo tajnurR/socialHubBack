@@ -170,12 +170,16 @@ media bytes instead of publishing Google Drive links:
   setting/clearing a per-post time override while leaving the schedule default
   posting time unchanged.
 - Editing a schedule's posting time or date range recalculates waiting linked
-  posts from the schedule start date and posting time. A post-level
-  `timeOverride` is optional and, when set, replaces only that post's time while
-  keeping the schedule's date/sequence rule.
+  posts from the schedule start date and posting time. Linked posts are grouped
+  into independent platform/account queues, so Facebook Page A and Facebook Page
+  B both start from the same schedule start slot and advance separately.
+- A post-level `scheduledAtOverride` is optional and, when set, replaces that
+  post's generated queue slot with an exact custom date/time.
 - Schedule post responses include `mediaAssetId` and `thumbnailUrl` so the UI can
   load authenticated previews for linked posts instead of relying on raw media
   URLs.
+- Flyway migration `V20__post_schedule_datetime_override.sql` adds
+  `posts.scheduled_at_override` and queue lookup indexing.
 - The scheduler runs every minute (`SCHEDULED_PUBLISHER_POLL_INTERVAL_MS`,
   default `60000`) and claims due posts where `scheduledAt <= now` and status
   is `PENDING`.

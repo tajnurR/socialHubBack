@@ -77,6 +77,9 @@ public class Post extends TenantBaseEntity {
     @Column(name = "time_override")
     private java.time.LocalTime timeOverride;
 
+    @Column(name = "scheduled_at_override")
+    private Instant scheduledAtOverride;
+
     /** The schedule event this post belongs to, if any. */
     @Column(name = "schedule_event_id")
     private Long scheduleEventId;

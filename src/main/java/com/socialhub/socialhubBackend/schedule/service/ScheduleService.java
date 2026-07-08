@@ -212,7 +212,7 @@ public class ScheduleService {
                 .mapToInt(Post::getSortOrder)
                 .max()
                 .orElse(-1) + 1;
-        Instant nextSlot = nextAppendSlot(event, existingPosts);
+        Map<String, Integer> nextQueueIndexes = nextQueueIndexes(existingPosts);
 
         CurrentUser user = currentUserProvider.currentUser();
         for (Long postId : postIds) {
@@ -227,15 +227,17 @@ public class ScheduleService {
             }
             post.setScheduleEventId(event.getId());
             post.setSortOrder(nextSortOrder++);
-            validateWithinDateRange(event, nextSlot);
-            post.setScheduledAt(nextSlot);
             applyScheduleTarget(event, post);
+            validatePostAccountMatchesPlatform(post);
+            int queueIndex = nextQueueIndexes.merge(queueKey(post), 1, Integer::sum) - 1;
+            Instant scheduledAt = scheduledAtForQueueIndex(event, queueIndex);
+            validateWithinDateRange(event, scheduledAt);
+            post.setScheduledAt(scheduledAt);
             post.setStatus(statusForAttachedPost(event, post));
             post.setErrorMessage(null);
             post.setRetryCount(0);
             post.setLastRetryAt(null);
             postRepository.save(post);
-            nextSlot = nextSlotAfter(event, nextSlot);
         }
         return toScheduleResponse(event);
     }
@@ -291,6 +293,7 @@ public class ScheduleService {
         post.setScheduleEventId(null);
         post.setScheduledAt(null);
         post.setTimeOverride(null);
+        post.setScheduledAtOverride(null);
         post.setSortOrder(0);
         post.setStatus(PostStatus.DRAFT);
         post.setErrorMessage(null);
@@ -306,7 +309,10 @@ public class ScheduleService {
         Post post = getOwnedPostInSchedule(event, postId);
         requireWaitingPost(post);
         post.setTimeOverride(request.timeOverride());
-        Instant scheduledAt = scheduledAtForIndex(event, post.getSortOrder(), request.timeOverride());
+        post.setScheduledAtOverride(request.scheduledAtOverride());
+        Instant scheduledAt = request.scheduledAtOverride() != null
+                ? request.scheduledAtOverride()
+                : scheduledAtForQueueIndex(event, queueIndex(event, post), request.timeOverride());
         validateWithinDateRange(event, scheduledAt);
         post.setScheduledAt(scheduledAt);
         post.setStatus(PostStatus.PENDING);
@@ -493,7 +499,7 @@ public class ScheduleService {
         post.setContent(blankToNull(request.caption()));
         post.setPlatform(request.platform() != null ? request.platform() : schedulePlatform(event));
         post.setSocialIntegrationId(resolvePostAccount(request.socialIntegrationId(), post));
-        post.setScheduledAt(scheduledAtForIndex(event, index, request.timeOverride()));
+        post.setScheduledAt(scheduledAtForQueueIndex(event, index, request.timeOverride()));
         post.setMediaUrl(blankToNull(request.mediaUrl()));
         post.setMediaType(mediaUrlValidator.validate(post.getMediaUrl()));
         post.setLink(blankToNull(request.link()));
@@ -609,6 +615,7 @@ public class ScheduleService {
                 post.getScheduledAt(),
                 post.getStatus(),
                 post.getSocialIntegrationId(),
+                targetAccountName(post),
                 post.getMediaAssetId(),
                 post.getMediaType(),
                 thumbnailUrl(post),
@@ -617,6 +624,7 @@ public class ScheduleService {
                 split(post.getHashtags()),
                 post.getCta(),
                 post.getTimeOverride(),
+                post.getScheduledAtOverride(),
                 post.getPublishedAt(),
                 post.getExternalPostId(),
                 post.getErrorMessage(),
@@ -739,7 +747,9 @@ public class ScheduleService {
             if (post.getStatus() == PostStatus.POSTED || post.getStatus() == PostStatus.PROCESSING) {
                 continue;
             }
-            Instant scheduledAt = scheduledAtForIndex(event, post.getSortOrder(), post.getTimeOverride());
+            Instant scheduledAt = post.getScheduledAtOverride() != null
+                    ? post.getScheduledAtOverride()
+                    : scheduledAtForQueueIndex(event, queueIndex(event, post), post.getTimeOverride());
             validateWithinDateRange(event, scheduledAt);
             post.setScheduledAt(scheduledAt);
             if ("active".equalsIgnoreCase(normalizeStatus(event.getStatus()))
@@ -757,10 +767,16 @@ public class ScheduleService {
     }
 
     private void validateWithinDateRange(ScheduleEvent event, Instant scheduledAt) {
-        if (event.getEndDate() == null || scheduledAt == null) {
+        if (scheduledAt == null) {
             return;
         }
         LocalDate scheduledDate = scheduledAt.atZone(zone(event)).toLocalDate();
+        if (event.getStartDate() != null && scheduledDate.isBefore(event.getStartDate())) {
+            throw new BusinessException("Custom posting date/time cannot be before the schedule start date.");
+        }
+        if (event.getEndDate() == null) {
+            return;
+        }
         if (scheduledDate.isAfter(event.getEndDate())) {
             throw new BusinessException("The selected date range is too short for the linked posts in this schedule.");
         }
@@ -847,6 +863,17 @@ public class ScheduleService {
                 .orElse(null);
     }
 
+    private String targetAccountName(Post post) {
+        if (post.getSocialIntegrationId() == null) {
+            return null;
+        }
+        return integrationRepository
+                .findByIdAndOrganizationIdAndUserId(
+                        post.getSocialIntegrationId(), post.getOrganizationId(), post.getUserId())
+                .map(SocialIntegration::getDisplayName)
+                .orElse(null);
+    }
+
     private int validCustomInterval(Integer value) {
         if (value == null) {
             return 1;
@@ -857,7 +884,11 @@ public class ScheduleService {
         return value;
     }
 
-    private Instant scheduledAtForIndex(ScheduleEvent event, int index, LocalTime overrideTime) {
+    private Instant scheduledAtForQueueIndex(ScheduleEvent event, int index) {
+        return scheduledAtForQueueIndex(event, index, null);
+    }
+
+    private Instant scheduledAtForQueueIndex(ScheduleEvent event, int index, LocalTime overrideTime) {
         LocalDate startDate = event.getStartDate() != null ? event.getStartDate() : LocalDate.now(zone(event));
         LocalTime time = overrideTime != null ? overrideTime : defaultPostingTime(event);
         String type = blankToDefault(event.getScheduleType(), "one-time");
@@ -869,6 +900,33 @@ public class ScheduleService {
                     .plus((long) validCustomInterval(event.getCustomIntervalHours()) * index, ChronoUnit.HOURS);
             default -> atEventZone(startDate, time, event).plus(index, ChronoUnit.HOURS);
         };
+    }
+
+    private int queueIndex(ScheduleEvent event, Post target) {
+        List<Post> queue = postsFor(event).stream()
+                .filter(post -> queueKey(post).equals(queueKey(target)))
+                .sorted(Comparator.comparingInt(Post::getSortOrder).thenComparing(Post::getId))
+                .toList();
+        for (int i = 0; i < queue.size(); i++) {
+            if (Objects.equals(queue.get(i).getId(), target.getId())) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    private Map<String, Integer> nextQueueIndexes(List<Post> posts) {
+        Map<String, Integer> counts = new HashMap<>();
+        for (Post post : posts) {
+            counts.merge(queueKey(post), 1, Integer::sum);
+        }
+        return counts;
+    }
+
+    private String queueKey(Post post) {
+        String platform = post.getPlatform() == null ? "UNKNOWN" : post.getPlatform().name();
+        String account = post.getSocialIntegrationId() == null ? "NO_ACCOUNT" : String.valueOf(post.getSocialIntegrationId());
+        return platform + "|" + account;
     }
 
     private Instant weeklySlot(ScheduleEvent event, LocalDate startDate, LocalTime time, int index) {
@@ -1117,6 +1175,7 @@ public class ScheduleService {
         target.setHashtags(source.getHashtags());
         target.setCta(source.getCta());
         target.setTimeOverride(source.getTimeOverride());
+        target.setScheduledAtOverride(source.getScheduledAtOverride());
         target.setSortOrder(source.getSortOrder());
     }
 
@@ -1128,6 +1187,7 @@ public class ScheduleService {
         clone.setScheduleEventId(null);
         clone.setScheduledAt(null);
         clone.setTimeOverride(null);
+        clone.setScheduledAtOverride(null);
         clone.setStatus(PostStatus.DRAFT);
         clone.setPublishedAt(null);
         clone.setExternalPostId(null);

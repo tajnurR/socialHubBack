@@ -259,6 +259,7 @@ public class PostService {
         clone.setStatus(PostStatus.DRAFT);
         clone.setScheduledAt(null);
         clone.setTimeOverride(null);
+        clone.setScheduledAtOverride(null);
         clone.setScheduleEventId(null);
         clone.setSortOrder(0);
         clone.setExternalPostId(null);
