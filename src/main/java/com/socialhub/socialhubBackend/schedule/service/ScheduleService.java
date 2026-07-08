@@ -904,6 +904,7 @@ public class ScheduleService {
 
     private int queueIndex(ScheduleEvent event, Post target) {
         List<Post> queue = postsFor(event).stream()
+                .filter(this::countsInFutureQueue)
                 .filter(post -> queueKey(post).equals(queueKey(target)))
                 .sorted(Comparator.comparingInt(Post::getSortOrder).thenComparing(Post::getId))
                 .toList();
@@ -918,9 +919,16 @@ public class ScheduleService {
     private Map<String, Integer> nextQueueIndexes(List<Post> posts) {
         Map<String, Integer> counts = new HashMap<>();
         for (Post post : posts) {
+            if (!countsInFutureQueue(post)) {
+                continue;
+            }
             counts.merge(queueKey(post), 1, Integer::sum);
         }
         return counts;
+    }
+
+    private boolean countsInFutureQueue(Post post) {
+        return post.getStatus() != PostStatus.POSTED && post.getStatus() != PostStatus.PROCESSING;
     }
 
     private String queueKey(Post post) {
@@ -961,39 +969,6 @@ public class ScheduleService {
             case "sat", "saturday" -> java.time.DayOfWeek.SATURDAY;
             case "sun", "sunday" -> java.time.DayOfWeek.SUNDAY;
             default -> null;
-        };
-    }
-
-    private Instant nextAppendSlot(ScheduleEvent event, List<Post> existingPosts) {
-        Instant lastScheduled = existingPosts.stream()
-                .map(Post::getScheduledAt)
-                .filter(Objects::nonNull)
-                .max(Comparator.naturalOrder())
-                .orElse(null);
-        Instant slot = lastScheduled == null ? firstScheduleSlot(event) : nextSlotAfter(event, lastScheduled);
-        Instant now = Instant.now();
-        while (slot.isBefore(now)) {
-            slot = nextSlotAfter(event, slot);
-        }
-        return slot;
-    }
-
-    private Instant firstScheduleSlot(ScheduleEvent event) {
-        if (event.getMode() == ScheduleMode.INTERVAL && event.getStartTime() != null) {
-            return event.getStartTime();
-        }
-        LocalDate startDate = event.getStartDate() != null ? event.getStartDate() : LocalDate.now(zone(event));
-        return atEventZone(startDate, defaultPostingTime(event), event);
-    }
-
-    private Instant nextSlotAfter(ScheduleEvent event, Instant slot) {
-        String type = blankToDefault(event.getScheduleType(), "one-time");
-        return switch (type) {
-            case "daily" -> slot.atZone(zone(event)).plusDays(1).toInstant();
-            case "weekly" -> slot.atZone(zone(event)).plusWeeks(1).toInstant();
-            case "monthly" -> slot.atZone(zone(event)).plusMonths(1).toInstant();
-            case "custom" -> slot.plus(validCustomInterval(event.getCustomIntervalHours()), ChronoUnit.HOURS);
-            default -> slot.plus(1, ChronoUnit.HOURS);
         };
     }
 
