@@ -2,6 +2,7 @@ package com.socialhub.socialhubBackend.schedule.dto;
 
 import com.socialhub.socialhubBackend.integration.core.SocialPlatform;
 import com.socialhub.socialhubBackend.post.domain.PostStatus;
+import com.socialhub.socialhubBackend.post.domain.PostMediaType;
 import com.socialhub.socialhubBackend.post.dto.PostDtos.PostResponse;
 import com.socialhub.socialhubBackend.schedule.domain.ScheduleMode;
 import jakarta.validation.Valid;
@@ -90,6 +91,9 @@ public final class ScheduleDtos {
             Instant scheduledAt,
             PostStatus status,
             Long socialIntegrationId,
+            Long mediaAssetId,
+            PostMediaType mediaType,
+            String thumbnailUrl,
             String mediaUrl,
             String link,
             List<String> hashtags,

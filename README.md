@@ -169,6 +169,13 @@ media bytes instead of publishing Google Drive links:
 - Schedule post actions include detaching a waiting post without deleting it and
   setting/clearing a per-post time override while leaving the schedule default
   posting time unchanged.
+- Editing a schedule's posting time or date range recalculates waiting linked
+  posts from the schedule start date and posting time. A post-level
+  `timeOverride` is optional and, when set, replaces only that post's time while
+  keeping the schedule's date/sequence rule.
+- Schedule post responses include `mediaAssetId` and `thumbnailUrl` so the UI can
+  load authenticated previews for linked posts instead of relying on raw media
+  URLs.
 - The scheduler runs every minute (`SCHEDULED_PUBLISHER_POLL_INTERVAL_MS`,
   default `60000`) and claims due posts where `scheduledAt <= now` and status
   is `PENDING`.

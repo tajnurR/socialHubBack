@@ -5,6 +5,8 @@ import com.socialhub.socialhubBackend.common.exception.ResourceNotFoundException
 import com.socialhub.socialhubBackend.integration.core.SocialPlatform;
 import com.socialhub.socialhubBackend.integration.core.domain.SocialIntegration;
 import com.socialhub.socialhubBackend.integration.core.repository.SocialIntegrationRepository;
+import com.socialhub.socialhubBackend.media.domain.MediaAsset;
+import com.socialhub.socialhubBackend.media.repository.MediaAssetRepository;
 import com.socialhub.socialhubBackend.post.domain.Post;
 import com.socialhub.socialhubBackend.post.domain.PostStatus;
 import com.socialhub.socialhubBackend.post.repository.PostRepository;
@@ -70,6 +72,7 @@ public class ScheduleService {
     private final ScheduleTemplateRepository templateRepository;
     private final PostRepository postRepository;
     private final SocialIntegrationRepository integrationRepository;
+    private final MediaAssetRepository mediaAssetRepository;
     private final PostMapper postMapper;
     private final MediaUrlValidator mediaUrlValidator;
     private final CurrentUserProvider currentUserProvider;
@@ -79,6 +82,7 @@ public class ScheduleService {
             ScheduleTemplateRepository templateRepository,
             PostRepository postRepository,
             SocialIntegrationRepository integrationRepository,
+            MediaAssetRepository mediaAssetRepository,
             PostMapper postMapper,
             MediaUrlValidator mediaUrlValidator,
             CurrentUserProvider currentUserProvider) {
@@ -86,6 +90,7 @@ public class ScheduleService {
         this.templateRepository = templateRepository;
         this.postRepository = postRepository;
         this.integrationRepository = integrationRepository;
+        this.mediaAssetRepository = mediaAssetRepository;
         this.postMapper = postMapper;
         this.mediaUrlValidator = mediaUrlValidator;
         this.currentUserProvider = currentUserProvider;
@@ -120,6 +125,7 @@ public class ScheduleService {
         ScheduleEvent event = getOwnedEvent(id);
         applyScheduleRequest(event, request);
         ScheduleEvent saved = eventRepository.save(event);
+        recomputeLinkedPostTimes(saved);
         return toScheduleResponse(saved);
     }
 
@@ -221,6 +227,7 @@ public class ScheduleService {
             }
             post.setScheduleEventId(event.getId());
             post.setSortOrder(nextSortOrder++);
+            validateWithinDateRange(event, nextSlot);
             post.setScheduledAt(nextSlot);
             applyScheduleTarget(event, post);
             post.setStatus(statusForAttachedPost(event, post));
@@ -299,7 +306,9 @@ public class ScheduleService {
         Post post = getOwnedPostInSchedule(event, postId);
         requireWaitingPost(post);
         post.setTimeOverride(request.timeOverride());
-        post.setScheduledAt(scheduledAtForIndex(event, post.getSortOrder(), request.timeOverride()));
+        Instant scheduledAt = scheduledAtForIndex(event, post.getSortOrder(), request.timeOverride());
+        validateWithinDateRange(event, scheduledAt);
+        post.setScheduledAt(scheduledAt);
         post.setStatus(PostStatus.PENDING);
         post.setErrorMessage(null);
         post.setRetryCount(0);
@@ -600,6 +609,9 @@ public class ScheduleService {
                 post.getScheduledAt(),
                 post.getStatus(),
                 post.getSocialIntegrationId(),
+                post.getMediaAssetId(),
+                post.getMediaType(),
+                thumbnailUrl(post),
                 post.getMediaUrl(),
                 post.getLink(),
                 split(post.getHashtags()),
@@ -610,6 +622,17 @@ public class ScheduleService {
                 post.getErrorMessage(),
                 post.getSortOrder(),
                 new EngagementSummary(0, 0, 0, 0));
+    }
+
+    private String thumbnailUrl(Post post) {
+        if (post.getMediaAssetId() == null) {
+            return null;
+        }
+        return mediaAssetRepository
+                .findByIdAndOrganizationIdAndUserId(
+                        post.getMediaAssetId(), post.getOrganizationId(), post.getUserId())
+                .map(MediaAsset::getThumbnailUrl)
+                .orElse(null);
     }
 
     private ScheduleEventResponse toEventResponse(ScheduleEvent event) {
@@ -707,6 +730,39 @@ public class ScheduleService {
         }
         if (event.getTargetPlatform() != null) {
             post.setPlatform(event.getTargetPlatform());
+        }
+    }
+
+    private void recomputeLinkedPostTimes(ScheduleEvent event) {
+        List<Post> posts = postsFor(event);
+        for (Post post : posts) {
+            if (post.getStatus() == PostStatus.POSTED || post.getStatus() == PostStatus.PROCESSING) {
+                continue;
+            }
+            Instant scheduledAt = scheduledAtForIndex(event, post.getSortOrder(), post.getTimeOverride());
+            validateWithinDateRange(event, scheduledAt);
+            post.setScheduledAt(scheduledAt);
+            if ("active".equalsIgnoreCase(normalizeStatus(event.getStatus()))
+                    && (post.getStatus() == PostStatus.SCHEDULED || post.getStatus() == PostStatus.NOT_POSTED)) {
+                post.setStatus(PostStatus.PENDING);
+            } else if ("paused".equalsIgnoreCase(normalizeStatus(event.getStatus()))
+                    && (post.getStatus() == PostStatus.PENDING || post.getStatus() == PostStatus.SCHEDULED)) {
+                post.setStatus(PostStatus.PAUSED);
+            } else if ("draft".equalsIgnoreCase(normalizeStatus(event.getStatus()))
+                    && (post.getStatus() == PostStatus.PENDING || post.getStatus() == PostStatus.SCHEDULED || post.getStatus() == PostStatus.PAUSED)) {
+                post.setStatus(PostStatus.DRAFT);
+            }
+            postRepository.save(post);
+        }
+    }
+
+    private void validateWithinDateRange(ScheduleEvent event, Instant scheduledAt) {
+        if (event.getEndDate() == null || scheduledAt == null) {
+            return;
+        }
+        LocalDate scheduledDate = scheduledAt.atZone(zone(event)).toLocalDate();
+        if (scheduledDate.isAfter(event.getEndDate())) {
+            throw new BusinessException("The selected date range is too short for the linked posts in this schedule.");
         }
     }
 
