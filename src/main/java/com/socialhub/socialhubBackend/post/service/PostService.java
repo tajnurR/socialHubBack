@@ -12,6 +12,7 @@ import com.socialhub.socialhubBackend.media.repository.MediaAssetRepository;
 import com.socialhub.socialhubBackend.media.service.MediaService;
 import com.socialhub.socialhubBackend.post.domain.Post;
 import com.socialhub.socialhubBackend.post.domain.PostMediaType;
+import com.socialhub.socialhubBackend.post.domain.PostMediaAsset;
 import com.socialhub.socialhubBackend.post.domain.PostStatus;
 import com.socialhub.socialhubBackend.post.dto.PostDtos.BulkUploadResult;
 import com.socialhub.socialhubBackend.post.dto.PostDtos.CreatePostRequest;
@@ -19,6 +20,7 @@ import com.socialhub.socialhubBackend.post.dto.PostDtos.PostResponse;
 import com.socialhub.socialhubBackend.post.dto.PostDtos.RowError;
 import com.socialhub.socialhubBackend.post.dto.PostDtos.UpdatePostRequest;
 import com.socialhub.socialhubBackend.post.repository.PostRepository;
+import com.socialhub.socialhubBackend.post.repository.PostMediaAssetRepository;
 import com.socialhub.socialhubBackend.post.service.PostExcelService.RawRow;
 import com.socialhub.socialhubBackend.product.domain.Product;
 import com.socialhub.socialhubBackend.product.repository.ProductRepository;
@@ -51,6 +53,7 @@ public class PostService {
     private final ScheduleEventRepository scheduleEventRepository;
     private final SocialIntegrationRepository integrationRepository;
     private final MediaAssetRepository mediaAssetRepository;
+    private final PostMediaAssetRepository postMediaAssetRepository;
     private final MediaService mediaService;
     private final PostExcelService excelService;
     private final MediaUrlValidator mediaUrlValidator;
@@ -64,6 +67,7 @@ public class PostService {
             ScheduleEventRepository scheduleEventRepository,
             SocialIntegrationRepository integrationRepository,
             MediaAssetRepository mediaAssetRepository,
+            PostMediaAssetRepository postMediaAssetRepository,
             MediaService mediaService,
             PostExcelService excelService,
             MediaUrlValidator mediaUrlValidator,
@@ -75,6 +79,7 @@ public class PostService {
         this.scheduleEventRepository = scheduleEventRepository;
         this.integrationRepository = integrationRepository;
         this.mediaAssetRepository = mediaAssetRepository;
+        this.postMediaAssetRepository = postMediaAssetRepository;
         this.mediaService = mediaService;
         this.excelService = excelService;
         this.mediaUrlValidator = mediaUrlValidator;
@@ -129,9 +134,11 @@ public class PostService {
         post.setUserId(user.userId());
         post.setPlatform(platform);
         applyEditable(post, request.title(), request.content(), request.link(), request.mediaUrl(), request.mediaAssetId(),
-                request.productId(), request.socialIntegrationId(), null,
+                request.mediaAssetIds(), request.productId(), request.socialIntegrationId(), null,
                 PostStatus.DRAFT, null, platform);
-        return postMapper.toResponse(postRepository.save(post));
+        Post saved = postRepository.save(post);
+        syncMediaLinks(saved, mediaIds(request.mediaAssetId(), request.mediaAssetIds()));
+        return postMapper.toResponse(saved);
     }
 
     @Transactional
@@ -171,19 +178,19 @@ public class PostService {
             throw new BusinessException("Could not read the uploaded file.");
         }
 
-        List<Post> toImport = new ArrayList<>();
+        int importedCount = 0;
         List<RowError> errors = new ArrayList<>();
         for (RawRow row : rows) {
             try {
-                toImport.add(buildPost(row, user, selectedPlatform, accountsByIdentifier, productIdByName, productIdBySku));
+                buildPost(row, user, selectedPlatform, accountsByIdentifier, productIdByName, productIdBySku);
+                importedCount++;
             } catch (RowValidationException ex) {
                 errors.add(rowError(row, ex.getMessage()));
             }
         }
-        postRepository.saveAll(toImport);
         String errorReportCsv = errors.isEmpty() ? null : errorReportCsv(errors);
         return new BulkUploadResult(
-                toImport.size(),
+                importedCount,
                 errors,
                 errorReportCsv,
                 errors.isEmpty() ? null : "bulk-upload-errors-" + Instant.now().toEpochMilli() + ".csv");
@@ -201,9 +208,11 @@ public class PostService {
         SocialPlatform platform = request.platform() == null ? post.getPlatform() : request.platform();
         post.setPlatform(platform);
         applyEditable(post, request.title(), request.content(), request.link(), request.mediaUrl(), request.mediaAssetId(),
-                request.productId(), request.socialIntegrationId(), post.getScheduleEventId(),
+                request.mediaAssetIds(), request.productId(), request.socialIntegrationId(), post.getScheduleEventId(),
                 post.getStatus(), post.getScheduledAt(), platform);
-        return postMapper.toResponse(postRepository.save(post));
+        Post saved = postRepository.save(post);
+        syncMediaLinks(saved, mediaIds(request.mediaAssetId(), request.mediaAssetIds()));
+        return postMapper.toResponse(saved);
     }
 
     @Transactional
@@ -258,7 +267,9 @@ public class PostService {
         clone.setErrorMessage(null);
         clone.setRetryCount(0);
         clone.setLastRetryAt(null);
-        return postMapper.toResponse(postRepository.save(clone));
+        Post saved = postRepository.save(clone);
+        syncMediaLinks(saved, existingMediaIds(source));
+        return postMapper.toResponse(saved);
     }
 
     /** Ownership-checked fetch (404 if not the current user's). */
@@ -314,7 +325,8 @@ public class PostService {
             throw new RowValidationException("Unknown product: " + row.product());
         }
 
-        AppliedMedia media = resolveBulkMedia(row);
+        List<AppliedMedia> mediaItems = resolveBulkMedia(row);
+        AppliedMedia primaryMedia = mediaItems.isEmpty() ? new AppliedMedia(null, null, null) : mediaItems.get(0);
 
         Post post = new Post();
         post.setOrganizationId(user.organizationId());
@@ -324,13 +336,15 @@ public class PostService {
         post.setTitle(row.postTitle());
         post.setContent(row.postContent());
         post.setLink(row.link().isBlank() ? null : row.link());
-        post.setMediaAssetId(media.mediaAssetId());
-        post.setMediaUrl(media.mediaUrl());
-        post.setMediaType(media.mediaType());
+        post.setMediaAssetId(primaryMedia.mediaAssetId());
+        post.setMediaUrl(primaryMedia.mediaUrl());
+        post.setMediaType(primaryMedia.mediaType());
         post.setProductId(productId);
         post.setScheduledAt(null);
         post.setStatus(PostStatus.DRAFT);
-        return post;
+        Post saved = postRepository.save(post);
+        syncMediaLinks(saved, mediaItems.stream().map(AppliedMedia::mediaAssetId).filter(id -> id != null).toList());
+        return saved;
     }
 
     private void applyEditable(
@@ -340,6 +354,7 @@ public class PostService {
             String link,
             String mediaUrl,
             Long mediaAssetId,
+            List<Long> mediaAssetIds,
             Long productId,
             Long socialIntegrationId,
             Long scheduleEventId,
@@ -352,7 +367,7 @@ public class PostService {
         }
         post.setContent(requiredContent(content));
         post.setLink(blankToNull(link));
-        AppliedMedia appliedMedia = resolveMedia(post, mediaAssetId, mediaUrl);
+        AppliedMedia appliedMedia = resolveMedia(post, primaryMediaAssetId(mediaAssetId, mediaAssetIds), mediaUrl);
         post.setMediaAssetId(appliedMedia.mediaAssetId());
         post.setMediaUrl(appliedMedia.mediaUrl());
         post.setMediaType(appliedMedia.mediaType());
@@ -438,38 +453,32 @@ public class PostService {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
-    private AppliedMedia resolveBulkMedia(RawRow row) {
-        String image = blankToNull(row.imageUrl());
-        String video = blankToNull(row.videoUrl());
-        String googleDriveUrl = blankToNull(row.googleDriveUrl());
-        long references = List.of(image, video, googleDriveUrl).stream().filter(value -> value != null).count();
-        if (references > 1) {
-            throw new RowValidationException("Use only one media reference: imageUrl, videoUrl, or googleDriveUrl.");
-        }
-        if (googleDriveUrl != null) {
+    private List<AppliedMedia> resolveBulkMedia(RawRow row) {
+        List<AppliedMedia> mediaItems = new ArrayList<>();
+        for (String googleDriveUrl : splitMediaReferences(row.googleDriveUrl())) {
             MediaItemResponse media = mediaService.attachGoogleDriveMedia(googleDriveUrl);
             ensureUploaded(media, "Google Drive media");
-            return toAppliedMedia(media);
+            mediaItems.add(toAppliedMedia(media));
         }
-        if (image != null) {
+        for (String image : splitMediaReferences(row.imageUrl())) {
             PostMediaType type = validateMediaRow(image);
             if (type != PostMediaType.IMAGE) {
-                throw new RowValidationException("imageUrl must point to a supported image.");
+                throw new RowValidationException("imageUrl must contain supported image URLs only.");
             }
             MediaItemResponse media = mediaService.importExternalMedia(image, MediaType.IMAGE);
             ensureUploaded(media, "Imported image");
-            return toAppliedMedia(media);
+            mediaItems.add(toAppliedMedia(media));
         }
-        if (video != null) {
+        for (String video : splitMediaReferences(row.videoUrl())) {
             PostMediaType type = validateMediaRow(video);
             if (type != PostMediaType.VIDEO) {
-                throw new RowValidationException("videoUrl must point to a supported video.");
+                throw new RowValidationException("videoUrl must contain supported video URLs only.");
             }
             MediaItemResponse media = mediaService.importExternalMedia(video, MediaType.VIDEO);
             ensureUploaded(media, "Imported video");
-            return toAppliedMedia(media);
+            mediaItems.add(toAppliedMedia(media));
         }
-        return new AppliedMedia(null, null, null);
+        return dedupeAppliedMedia(mediaItems);
     }
 
     private AppliedMedia resolveMedia(Post post, Long mediaAssetId, String mediaUrl) {
@@ -523,6 +532,71 @@ public class PostService {
     }
 
     private record AppliedMedia(Long mediaAssetId, String mediaUrl, PostMediaType mediaType) {}
+
+    private Long primaryMediaAssetId(Long mediaAssetId, List<Long> mediaAssetIds) {
+        if (mediaAssetIds != null && !mediaAssetIds.isEmpty()) {
+            return mediaAssetIds.get(0);
+        }
+        return mediaAssetId;
+    }
+
+    private List<Long> mediaIds(Long mediaAssetId, List<Long> mediaAssetIds) {
+        List<Long> ids = new ArrayList<>();
+        if (mediaAssetIds != null) {
+            ids.addAll(mediaAssetIds.stream().filter(id -> id != null).toList());
+        } else if (mediaAssetId != null) {
+            ids.add(mediaAssetId);
+        }
+        return ids.stream().distinct().toList();
+    }
+
+    private List<Long> existingMediaIds(Post post) {
+        List<Long> ids = postMediaAssetRepository.findByPostIdOrderByDisplayOrderAscIdAsc(post.getId())
+                .stream()
+                .map(PostMediaAsset::getMediaAssetId)
+                .toList();
+        if (!ids.isEmpty()) {
+            return ids;
+        }
+        return post.getMediaAssetId() == null ? List.of() : List.of(post.getMediaAssetId());
+    }
+
+    private void syncMediaLinks(Post post, List<Long> mediaAssetIds) {
+        postMediaAssetRepository.deleteByPostId(post.getId());
+        int index = 0;
+        for (Long mediaAssetId : mediaAssetIds.stream().distinct().toList()) {
+            MediaAsset asset = mediaAssetRepository
+                    .findByIdAndOrganizationIdAndUserId(mediaAssetId, post.getOrganizationId(), post.getUserId())
+                    .orElseThrow(() -> new BusinessException("Selected media is not in your library."));
+            PostMediaAsset link = new PostMediaAsset();
+            link.setPostId(post.getId());
+            link.setMediaAssetId(asset.getId());
+            link.setDisplayOrder(index++);
+            postMediaAssetRepository.save(link);
+        }
+    }
+
+    private List<String> splitMediaReferences(String value) {
+        String resolved = blankToNull(value);
+        if (resolved == null) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(resolved.split("[\\n;,]+"))
+                .map(String::trim)
+                .filter(item -> !item.isBlank())
+                .distinct()
+                .toList();
+    }
+
+    private List<AppliedMedia> dedupeAppliedMedia(List<AppliedMedia> items) {
+        Map<Long, AppliedMedia> byId = new java.util.LinkedHashMap<>();
+        for (AppliedMedia item : items) {
+            if (item.mediaAssetId() != null) {
+                byId.putIfAbsent(item.mediaAssetId(), item);
+            }
+        }
+        return new ArrayList<>(byId.values());
+    }
 
     private AppliedMedia toAppliedMedia(MediaItemResponse media) {
         PostMediaType mediaType = switch (media.mediaType()) {

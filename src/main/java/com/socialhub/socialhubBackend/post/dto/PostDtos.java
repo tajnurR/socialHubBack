@@ -30,6 +30,7 @@ public final class PostDtos {
             String directDownloadUrl,
             String thumbnailUrl,
             MediaUploadStatus mediaUploadStatus,
+            List<PostMediaItemResponse> mediaItems,
             Long productId,
             PostStatus status,
             Instant scheduledAt,
@@ -44,6 +45,17 @@ public final class PostDtos {
             Instant createdAt,
             Instant updatedAt) {}
 
+    public record PostMediaItemResponse(
+            Long mediaAssetId,
+            PostMediaType mediaType,
+            String mediaUrl,
+            String googleDriveFileId,
+            String googleDriveUrl,
+            String directDownloadUrl,
+            String thumbnailUrl,
+            MediaUploadStatus mediaUploadStatus,
+            int displayOrder) {}
+
     /** Create a single owned post from the Post Management form. */
     public record CreatePostRequest(
             @NotNull SocialPlatform platform,
@@ -53,6 +65,7 @@ public final class PostDtos {
             String link,
             String mediaUrl,
             Long mediaAssetId,
+            List<Long> mediaAssetIds,
             @NotNull Long productId) {}
 
     /** Editable fields of a draft. */
@@ -64,6 +77,7 @@ public final class PostDtos {
             String link,
             String mediaUrl,
             Long mediaAssetId,
+            List<Long> mediaAssetIds,
             Long productId) {}
 
     /** Outcome of a bulk upload: how many imported + per-row errors + downloadable report. */

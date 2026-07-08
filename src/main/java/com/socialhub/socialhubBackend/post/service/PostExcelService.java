@@ -87,9 +87,14 @@ public class PostExcelService {
             example.createCell(3).setCellValue("1234567890   (your " + accountLabel(platform) + " ID or name)");
             example.createCell(4).setCellValue("SKU-PRO   (optional)");
             example.createCell(5).setCellValue("https://example.com   (optional)");
-            example.createCell(6).setCellValue("https://example.com/photo.jpg   (optional)");
-            example.createCell(7).setCellValue("");
+            example.createCell(6).setCellValue("https://example.com/photo-1.jpg; https://example.com/photo-2.jpg   (optional)");
+            example.createCell(7).setCellValue("https://example.com/video.mp4   (optional)");
             example.createCell(8).setCellValue("");
+            Sheet instructions = workbook.createSheet("Instructions");
+            instructions.createRow(0).createCell(0).setCellValue("Use one row per draft post. Required columns: postContent, product, postTitle, pageId.");
+            instructions.createRow(1).createCell(0).setCellValue("Multiple media URLs are supported in imageUrl, videoUrl, or googleDriveUrl. Separate them with semicolons, commas, or new lines.");
+            instructions.createRow(2).createCell(0).setCellValue("Public image/video URLs are imported into the Media Library. Google Drive URLs must be accessible by your connected Drive account.");
+            instructions.autoSizeColumn(0);
 
             workbook.write(out);
             return out.toByteArray();
@@ -106,8 +111,8 @@ public class PostExcelService {
                 "1234567890",
                 "SKU-PRO",
                 "https://example.com",
-                "https://example.com/photo.jpg",
-                "",
+                "https://example.com/photo-1.jpg; https://example.com/photo-2.jpg",
+                "https://example.com/video.mp4",
                 "");
         StringBuilder out = new StringBuilder();
         out.append(String.join(",", COLUMNS)).append('\n');

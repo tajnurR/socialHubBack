@@ -107,24 +107,30 @@ see SSO note). Access tokens are encrypted at rest and never returned.
 
 ## Add Post Media Flow
 
-The single-post Add Post flow now supports media-library-backed drafts:
+The single-post Add Post flow supports ordered media-library-backed drafts:
 
 - `POST /api/v1/posts` accepts an optional `mediaAssetId` in addition to the
-  existing `mediaUrl`.
+  existing `mediaUrl`, and also accepts `mediaAssetIds` for multiple attached
+  image/video assets. The first item is mirrored to the legacy
+  `posts.media_asset_id`, `media_url`, and `media_type` columns for existing
+  schedule/publish compatibility; all attachments are stored in
+  `post_media_assets` in display order.
 - The frontend can create multiple account-specific drafts from one form submit
   by calling this single-post endpoint once per selected platform/account
   combination. Each saved row keeps its own `platform` and `socialIntegrationId`,
   so post list, scheduling, and publishing continue to operate on one concrete
   account target at a time.
-- When `mediaAssetId` is supplied, the backend verifies ownership of the
-  referenced `media_assets` row, links it through `posts.media_asset_id`, and
-  mirrors the resolved Drive URL and media type onto the post for publish-time
+- When media asset ids are supplied, the backend verifies ownership of every
+  referenced `media_assets` row, stores the ordered attachments, and mirrors the
+  primary item's resolved Drive URL and media type onto the post for publish-time
   compatibility.
 - `GET /api/v1/posts` and `GET /api/v1/posts/{id}` now return the linked media
   metadata needed by the UI: `mediaAssetId`, `googleDriveFileId`,
-  `googleDriveUrl`, `directDownloadUrl`, `thumbnailUrl`, and `mediaUploadStatus`.
-- Flyway migration `V14__posts_media_assets.sql` adds the post-to-media-library
-  link.
+  `googleDriveUrl`, `directDownloadUrl`, `thumbnailUrl`, `mediaUploadStatus`,
+  and `mediaItems[]` for all ordered attachments.
+- Flyway migration `V14__posts_media_assets.sql` adds the legacy primary
+  post-to-media-library link; `V19__post_multiple_media_assets.sql` adds ordered
+  multi-media attachments.
 
 ## Bulk Upload Media Flow
 
@@ -136,11 +142,11 @@ Drive-backed media attachment:
 - Template columns are: required `postContent`, `product`, `postTitle`,
   `pageId`; optional `productSku`, `link`, `imageUrl`, `videoUrl`,
   `googleDriveUrl`.
-- Each row may provide only one media source. Public `imageUrl` / `videoUrl`
-  values are downloaded and imported into the user's connected Google Drive
-  account as media-library assets. `googleDriveUrl` must resolve to an
-  accessible file in that same connected Drive account and is attached without a
-  duplicate upload.
+- Each media column may contain one or more URLs separated by semicolons,
+  commas, or new lines. Public `imageUrl` / `videoUrl` values are downloaded and
+  imported into the user's connected Google Drive account as media-library
+  assets. `googleDriveUrl` values must resolve to accessible files in that same
+  connected Drive account and are attached without a duplicate upload.
 - Invalid rows are returned with row-level errors and a downloadable CSV error
   report; valid rows are always created as `DRAFT` with `scheduledAt = null`.
 
