@@ -1053,40 +1053,49 @@ public class ScheduleService {
         List<ConflictWarning> warnings = new ArrayList<>();
         Map<String, List<Post>> bySlot = new HashMap<>();
         for (Post post : posts) {
-            if (post.getScheduledAt() == null) {
+            if (!countsInFutureQueue(post) || post.getScheduledAt() == null) {
                 continue;
             }
-            String key = post.getPlatform() + "|" + post.getScheduledAt().truncatedTo(ChronoUnit.MINUTES);
+            String key = queueKey(post) + "|" + post.getScheduledAt().truncatedTo(ChronoUnit.MINUTES);
             bySlot.computeIfAbsent(key, ignored -> new ArrayList<>()).add(post);
         }
         bySlot.values().stream().filter(group -> group.size() > 1).forEach(group -> warnings.add(new ConflictWarning(
                 "slot-" + group.get(0).getId(),
-                "Simultaneous platform posts",
-                group.size() + " posts target " + group.get(0).getPlatform() + " at the same time.",
+                "Simultaneous account posts",
+                group.size() + " posts target " + queueLabel(group.get(0)) + " at the same time.",
                 "warning",
                 group.stream().map(Post::getId).toList())));
         if (event.getDailyPostLimit() != null) {
-            Map<LocalDate, List<Post>> byDay = new HashMap<>();
+            Map<String, List<Post>> byDay = new HashMap<>();
             for (Post post : posts) {
-                if (post.getScheduledAt() != null) {
-                    byDay.computeIfAbsent(
-                                    post.getScheduledAt().atZone(zone(event)).toLocalDate(),
-                                    ignored -> new ArrayList<>())
-                            .add(post);
+                if (!countsInFutureQueue(post) || post.getScheduledAt() == null) {
+                    continue;
                 }
+                LocalDate day = post.getScheduledAt().atZone(zone(event)).toLocalDate();
+                byDay.computeIfAbsent(queueKey(post) + "|" + day, ignored -> new ArrayList<>()).add(post);
             }
-            byDay.forEach((day, group) -> {
+            byDay.values().forEach(group -> {
                 if (group.size() > event.getDailyPostLimit()) {
+                    LocalDate day = group.get(0).getScheduledAt().atZone(zone(event)).toLocalDate();
                     warnings.add(new ConflictWarning(
-                            "limit-" + day,
+                            "limit-" + queueKey(group.get(0)) + "-" + day,
                             "Daily post limit exceeded",
-                            group.size() + " posts are planned on " + day + "; limit is " + event.getDailyPostLimit() + ".",
+                            group.size() + " posts are planned for " + queueLabel(group.get(0)) + " on " + day + "; limit is " + event.getDailyPostLimit() + ".",
                             "critical",
                             group.stream().map(Post::getId).toList()));
                 }
             });
         }
         return warnings;
+    }
+
+    private String queueLabel(Post post) {
+        String platform = post.getPlatform() == null ? "Unknown platform" : post.getPlatform().name();
+        String account = targetAccountName(post);
+        if (account == null || account.isBlank()) {
+            account = post.getSocialIntegrationId() == null ? "No account" : "Account #" + post.getSocialIntegrationId();
+        }
+        return platform + " - " + account;
     }
 
     private List<ScheduleInsight> insights(ScheduleEvent event, List<Post> posts, int health) {
