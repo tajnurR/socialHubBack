@@ -61,4 +61,8 @@ public class SocialIntegration extends TenantBaseEntity {
     /** The app config (FacebookAppCredential) this connection was created through; null for manual. */
     @Column(name = "app_credential_id")
     private Long appCredentialId;
+
+    /** Soft-delete marker. Removed connections stay for audit/history but are hidden from active flows. */
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
 }

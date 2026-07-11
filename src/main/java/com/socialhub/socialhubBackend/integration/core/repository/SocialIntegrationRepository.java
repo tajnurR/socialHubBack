@@ -16,20 +16,54 @@ import org.springframework.stereotype.Repository;
 public interface SocialIntegrationRepository extends JpaRepository<SocialIntegration, Long> {
 
     /** Connections owned by a user within an organization. */
-    List<SocialIntegration> findByOrganizationIdAndUserId(Long organizationId, Long userId);
+    default List<SocialIntegration> findByOrganizationIdAndUserId(Long organizationId, Long userId) {
+        return findByOrganizationIdAndUserIdAndDeletedAtIsNull(organizationId, userId);
+    }
+
+    List<SocialIntegration> findByOrganizationIdAndUserIdAndDeletedAtIsNull(Long organizationId, Long userId);
 
     /** Ownership-checked by-id lookup: returns the row only if it belongs to this user. */
-    Optional<SocialIntegration> findByIdAndOrganizationIdAndUserId(
+    default Optional<SocialIntegration> findByIdAndOrganizationIdAndUserId(
+            Long id, Long organizationId, Long userId) {
+        return findByIdAndOrganizationIdAndUserIdAndDeletedAtIsNull(id, organizationId, userId);
+    }
+
+    Optional<SocialIntegration> findByIdAndOrganizationIdAndUserIdAndDeletedAtIsNull(
             Long id, Long organizationId, Long userId);
 
-    boolean existsByOrganizationIdAndUserIdAndPlatformAndExternalAccountId(
+    default boolean existsByOrganizationIdAndUserIdAndPlatformAndExternalAccountId(
+            Long organizationId, Long userId, SocialPlatform platform, String externalAccountId) {
+        return existsByOrganizationIdAndUserIdAndPlatformAndExternalAccountIdAndDeletedAtIsNull(
+                organizationId, userId, platform, externalAccountId);
+    }
+
+    boolean existsByOrganizationIdAndUserIdAndPlatformAndExternalAccountIdAndDeletedAtIsNull(
             Long organizationId, Long userId, SocialPlatform platform, String externalAccountId);
 
     /** Exact identity lookup for an owned platform account/page. */
-    Optional<SocialIntegration> findByOrganizationIdAndUserIdAndPlatformAndExternalAccountId(
+    default Optional<SocialIntegration> findByOrganizationIdAndUserIdAndPlatformAndExternalAccountId(
+            Long organizationId, Long userId, SocialPlatform platform, String externalAccountId) {
+        return findByOrganizationIdAndUserIdAndPlatformAndExternalAccountIdAndDeletedAtIsNull(
+                organizationId, userId, platform, externalAccountId);
+    }
+
+    Optional<SocialIntegration> findByOrganizationIdAndUserIdAndPlatformAndExternalAccountIdAndDeletedAtIsNull(
             Long organizationId, Long userId, SocialPlatform platform, String externalAccountId);
 
-    boolean existsByOrganizationIdAndUserIdAndPlatformAndAppCredentialIdAndStatus(
+    Optional<SocialIntegration> findByOrganizationIdAndUserIdAndPlatformAndExternalAccountIdAndDeletedAtIsNotNull(
+            Long organizationId, Long userId, SocialPlatform platform, String externalAccountId);
+
+    default boolean existsByOrganizationIdAndUserIdAndPlatformAndAppCredentialIdAndStatus(
+            Long organizationId,
+            Long userId,
+            SocialPlatform platform,
+            Long appCredentialId,
+            IntegrationStatus status) {
+        return existsByOrganizationIdAndUserIdAndPlatformAndAppCredentialIdAndStatusAndDeletedAtIsNull(
+                organizationId, userId, platform, appCredentialId, status);
+    }
+
+    boolean existsByOrganizationIdAndUserIdAndPlatformAndAppCredentialIdAndStatusAndDeletedAtIsNull(
             Long organizationId,
             Long userId,
             SocialPlatform platform,
@@ -37,5 +71,9 @@ public interface SocialIntegrationRepository extends JpaRepository<SocialIntegra
             IntegrationStatus status);
 
     /** Org-wide lookup (no user scope) — only for internal sync jobs, never request-scoped. */
-    List<SocialIntegration> findByOrganizationId(Long organizationId);
+    default List<SocialIntegration> findByOrganizationId(Long organizationId) {
+        return findByOrganizationIdAndDeletedAtIsNull(organizationId);
+    }
+
+    List<SocialIntegration> findByOrganizationIdAndDeletedAtIsNull(Long organizationId);
 }

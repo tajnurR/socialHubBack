@@ -107,6 +107,8 @@ public class IntegrationService {
         SocialIntegration integration = repository
                 .findByOrganizationIdAndUserIdAndPlatformAndExternalAccountId(
                         user.organizationId(), user.userId(), platform, account.externalAccountId())
+                .or(() -> repository.findByOrganizationIdAndUserIdAndPlatformAndExternalAccountIdAndDeletedAtIsNotNull(
+                        user.organizationId(), user.userId(), platform, account.externalAccountId()))
                 .orElseGet(() -> {
                     SocialIntegration created = new SocialIntegration();
                     created.setOrganizationId(user.organizationId());
@@ -124,6 +126,7 @@ public class IntegrationService {
         integration.setTokenObtainedAt(Instant.now());
         integration.setTokenExpiresAt(expiresAt);
         integration.setAppCredentialId(appCredentialId);
+        integration.setDeletedAt(null);
         return mapper.toResponse(repository.save(integration));
     }
 
@@ -141,7 +144,10 @@ public class IntegrationService {
 
     @Transactional
     public void disconnect(Long id) {
-        repository.delete(getOwnedIntegration(id));
+        SocialIntegration integration = getOwnedIntegration(id);
+        integration.setStatus(IntegrationStatus.DISCONNECTED);
+        integration.setDeletedAt(Instant.now());
+        repository.save(integration);
     }
 
     public CreatePostResponse createPost(Long id, CreatePostRequest request) {
