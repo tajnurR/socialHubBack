@@ -10,7 +10,21 @@ public final class GraphDtos {
     private GraphDtos() {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record Page(String id, String name, @JsonProperty("access_token") String accessToken) {}
+    public record Page(
+            String id,
+            String name,
+            @JsonProperty("access_token") String accessToken,
+            @JsonProperty("instagram_business_account") InstagramAccount instagramBusinessAccount) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record InstagramAccount(String id, String username, String name) {
+        public String displayName() {
+            if (username != null && !username.isBlank()) {
+                return "@" + username;
+            }
+            return name != null && !name.isBlank() ? name : id;
+        }
+    }
 
     /** Page profile info for the dashboard header (best-effort; fields may be absent). */
     @JsonIgnoreProperties(ignoreUnknown = true)

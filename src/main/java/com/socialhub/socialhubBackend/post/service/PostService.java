@@ -369,6 +369,9 @@ public class PostService {
         post.setContent(requiredContent(content));
         post.setLink(blankToNull(link));
         AppliedMedia appliedMedia = resolveMedia(post, primaryMediaAssetId(mediaAssetId, mediaAssetIds), mediaUrl);
+        if (platform == SocialPlatform.INSTAGRAM && appliedMedia.mediaType() == null) {
+            throw new BusinessException("Instagram posts require an image or video.");
+        }
         post.setMediaAssetId(appliedMedia.mediaAssetId());
         post.setMediaUrl(appliedMedia.mediaUrl());
         post.setMediaType(appliedMedia.mediaType());

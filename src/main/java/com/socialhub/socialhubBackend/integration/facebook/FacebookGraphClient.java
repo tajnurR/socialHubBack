@@ -4,6 +4,7 @@ import com.socialhub.socialhubBackend.common.exception.BusinessException;
 import com.socialhub.socialhubBackend.integration.core.exception.ProviderAuthException;
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.AccountsResponse;
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.CreateResponse;
+import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.InstagramAccount;
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.Page;
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.PageProfile;
 import com.socialhub.socialhubBackend.integration.facebook.dto.GraphDtos.PostsResponse;
@@ -131,13 +132,27 @@ public class FacebookGraphClient {
 
     /** GET /me/accounts — all pages the (user) token manages, each with its Page access token. */
     public AccountsResponse getManagedPages(String accessToken, String apiVersion) {
+        return getManagedPages(accessToken, apiVersion, FacebookGraphApi.Fields.MANAGED_PAGES, "list managed Facebook pages");
+    }
+
+    /** GET /me/accounts — pages and linked Instagram Business/Creator accounts. */
+    public AccountsResponse getManagedPagesWithInstagram(String accessToken, String apiVersion) {
+        return getManagedPages(
+                accessToken,
+                apiVersion,
+                FacebookGraphApi.Fields.MANAGED_PAGES_WITH_INSTAGRAM,
+                "list managed Instagram accounts");
+    }
+
+    private AccountsResponse getManagedPages(
+            String accessToken, String apiVersion, String fields, String action) {
         List<Page> pages = new ArrayList<>();
         Set<String> seenCursors = new HashSet<>();
         String after = null;
         boolean hasNext;
         AccountsResponse response;
         do {
-            response = getManagedPagesPage(accessToken, apiVersion, after);
+            response = getManagedPagesPage(accessToken, apiVersion, after, fields, action);
             if (response != null && response.data() != null) {
                 pages.addAll(response.data());
             }
@@ -154,13 +169,14 @@ public class FacebookGraphClient {
         return new AccountsResponse(pages, null);
     }
 
-    private AccountsResponse getManagedPagesPage(String accessToken, String apiVersion, String after) {
+    private AccountsResponse getManagedPagesPage(
+            String accessToken, String apiVersion, String after, String fields, String action) {
         String path = FacebookGraphApi.ME_ACCOUNTS.path(resolveVersion(apiVersion));
         return call(
                 () -> client.get()
                         .uri(uri -> {
                             uri.path(path)
-                                    .queryParam("fields", FacebookGraphApi.Fields.MANAGED_PAGES)
+                                    .queryParam("fields", fields)
                                     .queryParam("limit", 200);
                             if (after != null && !after.isBlank()) {
                                 uri.queryParam("after", after);
@@ -170,7 +186,23 @@ public class FacebookGraphClient {
                         .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
                         .retrieve()
                         .body(AccountsResponse.class),
-                "list managed Facebook pages");
+                action);
+    }
+
+    /** GET /{ig-user-id}?fields=id,username,name — validates an Instagram account token. */
+    public InstagramAccount getInstagramAccount(
+            String instagramAccountId, String accessToken, String apiVersion) {
+        String path = FacebookGraphApi.INSTAGRAM_ACCOUNT.path(
+                resolveVersion(apiVersion), Map.of("instagramAccountId", instagramAccountId));
+        return call(
+                () -> client.get()
+                        .uri(uri -> uri.path(path)
+                                .queryParam("fields", FacebookGraphApi.Fields.INSTAGRAM_PROFILE)
+                                .build())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .retrieve()
+                        .body(InstagramAccount.class),
+                "validate Instagram account");
     }
 
     /**
@@ -324,6 +356,55 @@ public class FacebookGraphClient {
                         .retrieve()
                         .body(CreateResponse.class),
                 "create Facebook video post");
+    }
+
+    /** POST /{ig-user-id}/media — create an Instagram image/video container. */
+    public CreateResponse createInstagramMediaContainer(
+            String instagramAccountId,
+            String accessToken,
+            String mediaUrl,
+            com.socialhub.socialhubBackend.post.domain.PostMediaType mediaType,
+            String caption,
+            String apiVersion) {
+        String path = FacebookGraphApi.INSTAGRAM_MEDIA.path(
+                resolveVersion(apiVersion), Map.of("instagramAccountId", instagramAccountId));
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        if (mediaType == com.socialhub.socialhubBackend.post.domain.PostMediaType.VIDEO) {
+            form.add("media_type", "REELS");
+            form.add("video_url", mediaUrl);
+        } else {
+            form.add("image_url", mediaUrl);
+        }
+        if (caption != null && !caption.isBlank()) {
+            form.add("caption", caption);
+        }
+        return call(
+                () -> client.post()
+                        .uri(uri -> uri.path(path).build())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .body(form)
+                        .retrieve()
+                        .body(CreateResponse.class),
+                "create Instagram media container");
+    }
+
+    /** POST /{ig-user-id}/media_publish — publish an Instagram media container. */
+    public CreateResponse publishInstagramMedia(
+            String instagramAccountId, String accessToken, String creationId, String apiVersion) {
+        String path = FacebookGraphApi.INSTAGRAM_MEDIA_PUBLISH.path(
+                resolveVersion(apiVersion), Map.of("instagramAccountId", instagramAccountId));
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("creation_id", creationId);
+        return call(
+                () -> client.post()
+                        .uri(uri -> uri.path(path).build())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .body(form)
+                        .retrieve()
+                        .body(CreateResponse.class),
+                "publish Instagram media");
     }
 
     /** Per-config override if provided, else the global default version. */

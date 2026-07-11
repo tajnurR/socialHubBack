@@ -26,7 +26,13 @@ public enum FacebookGraphApi {
     /** A page's photos edge (native image publish). */
     PAGE_PHOTOS("{pageId}/photos"),
     /** A page's videos edge (native video publish). */
-    PAGE_VIDEOS("{pageId}/videos");
+    PAGE_VIDEOS("{pageId}/videos"),
+    /** An Instagram Business/Creator account node linked to a Page. */
+    INSTAGRAM_ACCOUNT("{instagramAccountId}"),
+    /** Create an Instagram media container. */
+    INSTAGRAM_MEDIA("{instagramAccountId}/media"),
+    /** Publish an Instagram media container. */
+    INSTAGRAM_MEDIA_PUBLISH("{instagramAccountId}/media_publish");
 
     private final String template;
 
@@ -58,6 +64,13 @@ public enum FacebookGraphApi {
 
         /** {@code /me/accounts} rows: id, name, Page token. */
         public static final String MANAGED_PAGES = "id,name,access_token";
+
+        /** {@code /me/accounts} rows with linked Instagram Business account. */
+        public static final String MANAGED_PAGES_WITH_INSTAGRAM =
+                "id,name,access_token,instagram_business_account{id,username,name}";
+
+        /** Instagram profile validation fields. */
+        public static final String INSTAGRAM_PROFILE = "id,username,name";
 
         /** Page header profile for the dashboard. */
         public static final String PAGE_PROFILE = "name,fan_count,picture.type(large),category";

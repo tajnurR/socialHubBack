@@ -4,6 +4,7 @@ import com.socialhub.socialhubBackend.common.exception.BusinessException;
 import com.socialhub.socialhubBackend.common.security.EncryptionService;
 import com.socialhub.socialhubBackend.integration.core.SocialMediaProvider;
 import com.socialhub.socialhubBackend.integration.core.SocialMediaProviderRegistry;
+import com.socialhub.socialhubBackend.integration.core.SocialPlatform;
 import com.socialhub.socialhubBackend.integration.core.domain.SocialIntegration;
 import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.CreatePostCommand;
 import com.socialhub.socialhubBackend.integration.core.dto.ProviderDtos.ProviderPostRef;
@@ -77,7 +78,7 @@ public class PostPublisher {
 
             SocialMediaProvider provider = registry.get(integration.getPlatform());
             String token = encryptionService.decrypt(integration.getAccessToken());
-            MediaPayload media = resolveMedia(post);
+            MediaPayload media = resolveMedia(post, integration.getPlatform());
             ProviderPostRef ref = provider.createPost(
                     integration.getExternalAccountId(),
                     token,
@@ -103,7 +104,7 @@ public class PostPublisher {
         }
     }
 
-    private MediaPayload resolveMedia(Post post) {
+    private MediaPayload resolveMedia(Post post, SocialPlatform platform) {
         if (post.getMediaType() == null || post.getMediaAssetId() == null) {
             return null;
         }
@@ -117,6 +118,14 @@ public class PostPublisher {
             throw new BusinessException(
                     "Google Drive file reference is missing for the selected media.",
                     HttpStatus.BAD_REQUEST);
+        }
+        if (platform == SocialPlatform.INSTAGRAM) {
+            return new MediaPayload(
+                    media.getOriginalFileName() != null && !media.getOriginalFileName().isBlank()
+                            ? media.getOriginalFileName()
+                            : media.getFileName(),
+                    media.getContentType(),
+                    null);
         }
         DownloadedFile downloaded = googleDriveService.downloadMediaFile(
                 post.getOrganizationId(), post.getUserId(), media.getGoogleDriveFileId());
