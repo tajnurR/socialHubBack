@@ -230,6 +230,18 @@ public class GoogleDriveService {
         return withAccessToken(organizationId, userId, token -> client.getFile(token, googleDriveFileId));
     }
 
+    @Transactional
+    public DriveFile makeMediaFilePublic(Long organizationId, Long userId, String googleDriveFileId) {
+        DriveFile file = withAccessToken(organizationId, userId, token -> {
+            client.makeFilePublic(token, googleDriveFileId);
+            return client.getFile(token, googleDriveFileId);
+        });
+        GoogleDriveIntegration integration = ownedConnected(organizationId, userId);
+        integration.setLastSyncAt(Instant.now());
+        repository.save(integration);
+        return file;
+    }
+
     public DownloadedFile downloadMediaFile(String googleDriveFileId) {
         return withAccessToken(token -> client.downloadFile(token, googleDriveFileId));
     }

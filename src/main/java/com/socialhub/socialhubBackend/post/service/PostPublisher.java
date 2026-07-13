@@ -16,8 +16,10 @@ import com.socialhub.socialhubBackend.media.domain.MediaUploadStatus;
 import com.socialhub.socialhubBackend.media.repository.MediaAssetRepository;
 import com.socialhub.socialhubBackend.post.domain.Post;
 import com.socialhub.socialhubBackend.storage.drive.GoogleDriveClient.DownloadedFile;
+import com.socialhub.socialhubBackend.storage.drive.GoogleDriveClient.DriveFile;
 import com.socialhub.socialhubBackend.storage.drive.GoogleDriveService;
 import java.time.Instant;
+import org.springframework.web.util.UriComponentsBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -79,13 +81,16 @@ public class PostPublisher {
             SocialMediaProvider provider = registry.get(integration.getPlatform());
             String token = encryptionService.decrypt(integration.getAccessToken());
             MediaPayload media = resolveMedia(post, integration.getPlatform());
+            String mediaUrl = media != null && media.mediaUrl() != null && !media.mediaUrl().isBlank()
+                    ? media.mediaUrl()
+                    : post.getMediaUrl();
             ProviderPostRef ref = provider.createPost(
                     integration.getExternalAccountId(),
                     token,
                     new CreatePostCommand(
                             post.getContent(),
                             post.getMediaType() == null ? post.getLink() : null,
-                            post.getMediaUrl(),
+                            mediaUrl,
                             post.getMediaType(),
                             media == null ? null : media.filename(),
                             media == null ? null : media.contentType(),
@@ -120,12 +125,24 @@ public class PostPublisher {
                     HttpStatus.BAD_REQUEST);
         }
         if (platform == SocialPlatform.INSTAGRAM) {
+            DriveFile publicFile = googleDriveService.makeMediaFilePublic(
+                    post.getOrganizationId(), post.getUserId(), media.getGoogleDriveFileId());
+            String publicUrl = firstNonBlank(publicFile.webContentLink(), media.getDirectDownloadUrl());
+            if (publicUrl == null) {
+                publicUrl = publicDownloadUrl(media.getGoogleDriveFileId());
+            }
+            if (publicFile.webContentLink() != null && !publicFile.webContentLink().isBlank()
+                    && !publicFile.webContentLink().equals(media.getDirectDownloadUrl())) {
+                media.setDirectDownloadUrl(publicFile.webContentLink());
+                mediaAssetRepository.save(media);
+            }
             return new MediaPayload(
                     media.getOriginalFileName() != null && !media.getOriginalFileName().isBlank()
                             ? media.getOriginalFileName()
                             : media.getFileName(),
                     media.getContentType(),
-                    null);
+                    null,
+                    publicUrl);
         }
         DownloadedFile downloaded = googleDriveService.downloadMediaFile(
                 post.getOrganizationId(), post.getUserId(), media.getGoogleDriveFileId());
@@ -136,7 +153,23 @@ public class PostPublisher {
                 downloaded.contentType() != null && !downloaded.contentType().isBlank()
                         ? downloaded.contentType()
                         : media.getContentType(),
-                downloaded.body());
+                downloaded.body(),
+                null);
+    }
+
+    private String publicDownloadUrl(String googleDriveFileId) {
+        return UriComponentsBuilder.fromUriString("https://drive.google.com/uc")
+                .queryParam("export", "download")
+                .queryParam("id", googleDriveFileId)
+                .build()
+                .toUriString();
+    }
+
+    private String firstNonBlank(String first, String second) {
+        if (first != null && !first.isBlank()) {
+            return first;
+        }
+        return second != null && !second.isBlank() ? second : null;
     }
 
     private PublishAttempt fail(String message, boolean retryable) {
@@ -157,7 +190,7 @@ public class PostPublisher {
         return message.length() > MAX_ERROR_LENGTH ? message.substring(0, MAX_ERROR_LENGTH) : message;
     }
 
-    private record MediaPayload(String filename, String contentType, byte[] bytes) {}
+    private record MediaPayload(String filename, String contentType, byte[] bytes, String mediaUrl) {}
 
     public record PublishAttempt(
             boolean successful,

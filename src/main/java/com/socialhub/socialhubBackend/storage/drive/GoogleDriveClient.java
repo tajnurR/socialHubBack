@@ -240,6 +240,25 @@ public class GoogleDriveClient {
                 "read Google Drive file metadata");
     }
 
+    public void makeFilePublic(String accessToken, String fileId) {
+        URI uri = UriComponentsBuilder.fromUriString(properties.driveBaseUrl())
+                .path("/files/{fileId}/permissions")
+                .queryParam("fields", "id")
+                .build(fileId);
+        call(
+                () -> {
+                    client.post()
+                            .uri(uri)
+                            .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body(new PublicPermission("anyone", "reader", false))
+                            .retrieve()
+                            .toBodilessEntity();
+                    return null;
+                },
+                "make Google Drive media publicly readable");
+    }
+
     public DownloadedFile downloadFile(String accessToken, String fileId) {
         URI uri = UriComponentsBuilder.fromUriString(properties.driveBaseUrl())
                 .path("/files/{fileId}")
@@ -352,6 +371,8 @@ public class GoogleDriveClient {
     private record UploadMetadata(String name, List<String> parents) {}
 
     private record CreateFileMetadata(String name, String mimeType, List<String> parents) {}
+
+    private record PublicPermission(String type, String role, Boolean allowFileDiscovery) {}
 
     public record TokenResponse(
             @JsonProperty("access_token") String accessToken,

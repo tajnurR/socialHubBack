@@ -179,6 +179,15 @@ public class InstagramGraphClient {
                     "Instagram permission was denied. Reconnect and approve the requested permissions.",
                     HttpStatus.FORBIDDEN);
         }
+        if ((error.code() != null && error.code() == 36001)
+                || lower.contains("image format")
+                || lower.contains("valid image")
+                || lower.contains("url returned an error page")) {
+            return new BusinessException(
+                    "Instagram could not read the selected media. Use a valid public direct image URL "
+                            + "or select a Media Library file that can be shared publicly.",
+                    HttpStatus.BAD_REQUEST);
+        }
         if (httpStatus >= 400 && httpStatus < 500) {
             return new BusinessException(
                     message.isBlank() ? "Instagram rejected the request. Check your app setup." : message,
