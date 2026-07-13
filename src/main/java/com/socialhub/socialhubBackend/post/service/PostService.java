@@ -372,6 +372,9 @@ public class PostService {
         if (platform == SocialPlatform.INSTAGRAM && appliedMedia.mediaType() == null) {
             throw new BusinessException("Instagram posts require an image or video.");
         }
+        if (platform == SocialPlatform.LINKEDIN && appliedMedia.mediaType() != null) {
+            throw new BusinessException("LinkedIn media publishing is not enabled yet. Create a text-only LinkedIn post.");
+        }
         post.setMediaAssetId(appliedMedia.mediaAssetId());
         post.setMediaUrl(appliedMedia.mediaUrl());
         post.setMediaType(appliedMedia.mediaType());
