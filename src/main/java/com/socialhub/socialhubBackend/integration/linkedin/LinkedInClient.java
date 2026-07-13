@@ -5,6 +5,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.socialhub.socialhubBackend.common.exception.BusinessException;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
@@ -13,6 +16,7 @@ import org.springframework.core.NestedExceptionUtils;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
@@ -27,7 +31,7 @@ public class LinkedInClient {
 
     private static final Logger log = LoggerFactory.getLogger(LinkedInClient.class);
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
-    private static final Duration READ_TIMEOUT = Duration.ofSeconds(30);
+    private static final Duration READ_TIMEOUT = Duration.ofMinutes(5);
 
     private final RestClient client;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -77,6 +81,16 @@ public class LinkedInClient {
 
     public CreatePostResponse createTextPost(
             String authorUrn, String accessToken, String commentary, String apiVersion) {
+        return createPost(authorUrn, accessToken, commentary, null, null, apiVersion);
+    }
+
+    public CreatePostResponse createPost(
+            String authorUrn,
+            String accessToken,
+            String commentary,
+            String mediaUrn,
+            String mediaTitle,
+            String apiVersion) {
         Map<String, Object> body = Map.of(
                 "author", authorUrn,
                 "commentary", commentary,
@@ -87,6 +101,14 @@ public class LinkedInClient {
                         "thirdPartyDistributionChannels", java.util.List.of()),
                 "lifecycleState", "PUBLISHED",
                 "isReshareDisabledByAuthor", false);
+        if (mediaUrn != null && !mediaUrn.isBlank()) {
+            body = new java.util.LinkedHashMap<>(body);
+            body.put("content", Map.of(
+                    "media", Map.of(
+                            "id", mediaUrn,
+                            "title", mediaTitle == null || mediaTitle.isBlank() ? "SocialHub media" : mediaTitle)));
+        }
+        Map<String, Object> requestBody = body;
         return call(
                 () -> {
                     var response = client.post()
@@ -95,13 +117,186 @@ public class LinkedInClient {
                             .header("Linkedin-Version", resolveApiVersion(apiVersion))
                             .header("X-Restli-Protocol-Version", "2.0.0")
                             .contentType(MediaType.APPLICATION_JSON)
-                            .body(body)
+                            .body(requestBody)
                             .retrieve()
                             .toBodilessEntity();
                     String postId = response.getHeaders().getFirst("x-restli-id");
                     return new CreatePostResponse(postId == null || postId.isBlank() ? "LINKEDIN_POST" : postId);
                 },
                 "create LinkedIn post");
+    }
+
+    public String uploadImage(
+            String ownerUrn,
+            String accessToken,
+            String filename,
+            String contentType,
+            byte[] body,
+            String apiVersion) {
+        if (body == null || body.length == 0) {
+            throw new BusinessException("LinkedIn image upload requires a media file.");
+        }
+        InitializeImageUploadResponse initialized = initializeImageUpload(ownerUrn, accessToken, apiVersion);
+        if (initialized == null || initialized.value() == null || initialized.value().uploadUrl() == null) {
+            throw new BusinessException("LinkedIn did not return an image upload URL.");
+        }
+        uploadBinary(initialized.value().uploadUrl(), accessToken, contentType, body, "upload LinkedIn image");
+        return initialized.value().image();
+    }
+
+    public String uploadVideo(
+            String ownerUrn,
+            String accessToken,
+            String filename,
+            String contentType,
+            byte[] body,
+            String apiVersion) {
+        if (body == null || body.length == 0) {
+            throw new BusinessException("LinkedIn video upload requires a media file.");
+        }
+        if (!looksLikeMp4(filename, contentType)) {
+            throw new BusinessException("LinkedIn video posts require an MP4 video file.");
+        }
+        InitializeVideoUploadResponse initialized =
+                initializeVideoUpload(ownerUrn, accessToken, body.length, apiVersion);
+        if (initialized == null || initialized.value() == null || initialized.value().uploadInstructions() == null) {
+            throw new BusinessException("LinkedIn did not return video upload instructions.");
+        }
+        List<String> uploadedPartIds = new ArrayList<>();
+        for (VideoUploadInstruction instruction : initialized.value().uploadInstructions()) {
+            long firstByte = instruction.firstByte() == null ? 0 : instruction.firstByte();
+            long lastByte = instruction.lastByte() == null ? body.length - 1L : instruction.lastByte();
+            byte[] part = slice(body, firstByte, lastByte);
+            ResponseEntity<Void> response = uploadBinary(
+                    instruction.uploadUrl(),
+                    accessToken,
+                    MediaType.APPLICATION_OCTET_STREAM_VALUE,
+                    part,
+                    "upload LinkedIn video part");
+            String etag = response.getHeaders().getETag();
+            if (etag == null || etag.isBlank()) {
+                etag = response.getHeaders().getFirst("ETag");
+            }
+            if (etag != null && !etag.isBlank()) {
+                uploadedPartIds.add(stripQuotes(etag));
+            }
+        }
+        finalizeVideoUpload(
+                initialized.value().video(),
+                initialized.value().uploadToken(),
+                uploadedPartIds,
+                accessToken,
+                apiVersion);
+        return initialized.value().video();
+    }
+
+    private InitializeImageUploadResponse initializeImageUpload(
+            String ownerUrn, String accessToken, String apiVersion) {
+        return call(
+                () -> client.post()
+                        .uri("/rest/images?action=initializeUpload")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .header("Linkedin-Version", resolveApiVersion(apiVersion))
+                        .header("X-Restli-Protocol-Version", "2.0.0")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(Map.of("initializeUploadRequest", Map.of("owner", ownerUrn)))
+                        .retrieve()
+                        .body(InitializeImageUploadResponse.class),
+                "initialize LinkedIn image upload");
+    }
+
+    private InitializeVideoUploadResponse initializeVideoUpload(
+            String ownerUrn, String accessToken, int fileSizeBytes, String apiVersion) {
+        return call(
+                () -> client.post()
+                        .uri("/rest/videos?action=initializeUpload")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .header("Linkedin-Version", resolveApiVersion(apiVersion))
+                        .header("X-Restli-Protocol-Version", "2.0.0")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(Map.of(
+                                "initializeUploadRequest",
+                                Map.of(
+                                        "owner", ownerUrn,
+                                        "fileSizeBytes", fileSizeBytes,
+                                        "uploadCaptions", false,
+                                        "uploadThumbnail", false)))
+                        .retrieve()
+                        .body(InitializeVideoUploadResponse.class),
+                "initialize LinkedIn video upload");
+    }
+
+    private void finalizeVideoUpload(
+            String videoUrn,
+            String uploadToken,
+            List<String> uploadedPartIds,
+            String accessToken,
+            String apiVersion) {
+        call(
+                () -> client.post()
+                        .uri("/rest/videos?action=finalizeUpload")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .header("Linkedin-Version", resolveApiVersion(apiVersion))
+                        .header("X-Restli-Protocol-Version", "2.0.0")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(Map.of(
+                                "finalizeUploadRequest",
+                                Map.of(
+                                        "video", videoUrn,
+                                        "uploadToken", uploadToken == null ? "" : uploadToken,
+                                        "uploadedPartIds", uploadedPartIds)))
+                        .retrieve()
+                        .toBodilessEntity(),
+                "finalize LinkedIn video upload");
+    }
+
+    private ResponseEntity<Void> uploadBinary(
+            String uploadUrl, String accessToken, String contentType, byte[] body, String action) {
+        return call(
+                () -> RestClient.builder()
+                        .requestFactory(clientRequestFactory())
+                        .build()
+                        .put()
+                        .uri(uploadUrl)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .contentType(mediaType(contentType))
+                        .body(body)
+                        .retrieve()
+                        .toBodilessEntity(),
+                action);
+    }
+
+    private MediaType mediaType(String contentType) {
+        if (contentType == null || contentType.isBlank()) {
+            return MediaType.APPLICATION_OCTET_STREAM;
+        }
+        try {
+            return MediaType.parseMediaType(contentType);
+        } catch (RuntimeException ex) {
+            return MediaType.APPLICATION_OCTET_STREAM;
+        }
+    }
+
+    private byte[] slice(byte[] body, long firstByte, long lastByte) {
+        int from = Math.max(0, (int) firstByte);
+        int to = Math.min(body.length, (int) lastByte + 1);
+        if (from >= to) {
+            return new byte[0];
+        }
+        return Arrays.copyOfRange(body, from, to);
+    }
+
+    private boolean looksLikeMp4(String filename, String contentType) {
+        String type = contentType == null ? "" : contentType.toLowerCase();
+        String name = filename == null ? "" : filename.toLowerCase();
+        return type.contains("mp4") || name.endsWith(".mp4");
+    }
+
+    private String stripQuotes(String value) {
+        String trimmed = value.trim();
+        return trimmed.length() >= 2 && trimmed.startsWith("\"") && trimmed.endsWith("\"")
+                ? trimmed.substring(1, trimmed.length() - 1)
+                : trimmed;
     }
 
     private SimpleClientHttpRequestFactory clientRequestFactory() {
@@ -208,6 +403,23 @@ public class LinkedInClient {
             @JsonProperty("family_name") String familyName) {}
 
     public record CreatePostResponse(String id) {}
+
+    public record InitializeImageUploadResponse(ImageUploadValue value) {}
+
+    public record ImageUploadValue(
+            @JsonProperty("uploadUrlExpiresAt") Long uploadUrlExpiresAt,
+            String uploadUrl,
+            String image) {}
+
+    public record InitializeVideoUploadResponse(VideoUploadValue value) {}
+
+    public record VideoUploadValue(
+            @JsonProperty("uploadUrlsExpireAt") Long uploadUrlsExpireAt,
+            String video,
+            List<VideoUploadInstruction> uploadInstructions,
+            String uploadToken) {}
+
+    public record VideoUploadInstruction(String uploadUrl, Long firstByte, Long lastByte) {}
 
     private record LinkedInError(Integer serviceErrorCode, String status, String message) {}
 }
