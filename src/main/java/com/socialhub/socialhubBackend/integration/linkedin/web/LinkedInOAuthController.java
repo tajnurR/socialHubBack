@@ -72,7 +72,8 @@ public class LinkedInOAuthController {
     @Operation(summary = "Create a LinkedIn authorization URL")
     public ApiResponse<AuthorizationUrlResponse> authorizationUrl(
             @Valid @RequestBody AuthorizationUrlRequest request) {
-        return ApiResponse.ok(oauthService.authorizationUrl(request.redirectUri(), request.configId()));
+        return ApiResponse.ok(oauthService.authorizationUrl(
+                request.redirectUri(), request.configId(), request.connectionType()));
     }
 
     @PostMapping("/oauth/callback")

@@ -21,7 +21,7 @@ public class LinkedInOAuthStateStore {
     private final SecureRandom random = new SecureRandom();
     private final Map<String, StateEntry> states = new ConcurrentHashMap<>();
 
-    public StateEntry create(CurrentUser user, Long configId, String redirectUri) {
+    public StateEntry create(CurrentUser user, Long configId, String redirectUri, String connectionType) {
         cleanup();
         byte[] bytes = new byte[32];
         random.nextBytes(bytes);
@@ -32,6 +32,7 @@ public class LinkedInOAuthStateStore {
                 user.userId(),
                 configId,
                 redirectUri,
+                connectionType,
                 Instant.now().plus(TTL));
         states.put(state, entry);
         return entry;
@@ -68,5 +69,6 @@ public class LinkedInOAuthStateStore {
             Long userId,
             Long configId,
             String redirectUri,
+            String connectionType,
             Instant expiresAt) {}
 }

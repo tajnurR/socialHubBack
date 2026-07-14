@@ -29,6 +29,17 @@ import org.springframework.web.util.UriComponentsBuilder;
 public class LinkedInOAuthService {
 
     private static final String TOKEN_TYPE = "LINKEDIN_OAUTH";
+    private static final String CONNECTION_PERSONAL = "PERSONAL";
+    private static final String CONNECTION_COMPANY = "COMPANY";
+    private static final List<String> PERSONAL_SCOPES = List.of(
+            "openid", "profile", "email", "w_member_social");
+    private static final List<String> COMPANY_SCOPES = List.of(
+            "openid",
+            "profile",
+            "email",
+            "w_member_social",
+            "r_organization_admin",
+            "w_organization_social");
 
     private final LinkedInCredentialService credentialService;
     private final LinkedInOAuthStateStore stateStore;
@@ -55,15 +66,19 @@ public class LinkedInOAuthService {
         this.currentUserProvider = currentUserProvider;
     }
 
-    public AuthorizationUrlResponse authorizationUrl(String redirectUri, Long configId) {
+    public AuthorizationUrlResponse authorizationUrl(String redirectUri, Long configId, String connectionType) {
         LinkedInAppCredentials credentials = credentialService.resolve(configId);
+        String resolvedConnectionType = resolveConnectionType(connectionType);
         String effectiveRedirectUri = credentials.redirectUri() != null && !credentials.redirectUri().isBlank()
                 ? credentials.redirectUri()
                 : redirectUri;
         validateRedirectUri(effectiveRedirectUri);
         StateEntry entry = stateStore.create(
-                currentUserProvider.currentUser(), credentials.configId(), effectiveRedirectUri);
-        String scopes = effectiveScopes(credentials.scopes());
+                currentUserProvider.currentUser(),
+                credentials.configId(),
+                effectiveRedirectUri,
+                resolvedConnectionType);
+        String scopes = effectiveScopes(resolvedConnectionType);
         String url = UriComponentsBuilder.fromUriString(properties.authBaseUrl())
                 .queryParam("response_type", "code")
                 .queryParam("client_id", credentials.clientId())
@@ -98,14 +113,19 @@ public class LinkedInOAuthService {
                 ? Instant.now().plusSeconds(token.expiresIn())
                 : null;
         List<LinkedInAccountToken> accounts = new ArrayList<>();
-        accounts.add(new LinkedInAccountToken(authorUrn, displayName(profile, profile.sub()), "PERSONAL"));
-        try {
+        if (CONNECTION_COMPANY.equals(entry.connectionType())) {
             linkedInClient.getAdminOrganizations(token.accessToken(), credentials.apiVersion()).stream()
-                    .map(org -> new LinkedInAccountToken(org.id(), org.name(), "COMPANY"))
+                    .map(org -> new LinkedInAccountToken(org.id(), org.name(), CONNECTION_COMPANY))
                     .forEach(accounts::add);
-        } catch (BusinessException ex) {
-            // The user may not have organization products/scopes yet. Keep the personal
-            // profile available and let the UI show no company pages.
+            if (accounts.isEmpty()) {
+                throw new BusinessException(
+                        "No LinkedIn company Pages were found. Make sure this LinkedIn user is an approved Page admin and the app has organization permissions.");
+            }
+        } else {
+            accounts.add(new LinkedInAccountToken(
+                    authorUrn,
+                    displayName(profile, profile.sub()),
+                    CONNECTION_PERSONAL));
         }
         String exchangeId = exchangeStore.put(
                 currentUserProvider.currentUser().userId(),
@@ -154,19 +174,21 @@ public class LinkedInOAuthService {
                 .toList();
     }
 
-    private String effectiveScopes(String configuredScopes) {
-        Set<String> scopes = new LinkedHashSet<>();
-        if (configuredScopes != null && !configuredScopes.isBlank()) {
-            for (String scope : configuredScopes.split("\\s+")) {
-                if (!scope.isBlank()) {
-                    scopes.add(scope.trim());
-                }
-            }
-        }
-        for (String scope : properties.scopes()) {
-            scopes.add(scope);
-        }
+    private String effectiveScopes(String connectionType) {
+        Set<String> scopes = new LinkedHashSet<>(
+                CONNECTION_COMPANY.equals(connectionType) ? COMPANY_SCOPES : PERSONAL_SCOPES);
         return String.join(" ", scopes);
+    }
+
+    private String resolveConnectionType(String connectionType) {
+        if (connectionType == null || connectionType.isBlank()) {
+            return CONNECTION_PERSONAL;
+        }
+        String normalized = connectionType.trim().toUpperCase();
+        if (CONNECTION_PERSONAL.equals(normalized) || CONNECTION_COMPANY.equals(normalized)) {
+            return normalized;
+        }
+        throw new BusinessException("Unsupported LinkedIn connection type: " + connectionType);
     }
 
     private String displayName(UserInfoResponse profile, String fallbackId) {

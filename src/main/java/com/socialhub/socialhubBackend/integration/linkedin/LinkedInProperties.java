@@ -29,9 +29,7 @@ public record LinkedInProperties(
                     "openid",
                     "profile",
                     "email",
-                    "w_member_social",
-                    "r_organization_admin",
-                    "w_organization_social");
+                    "w_member_social");
         }
     }
 

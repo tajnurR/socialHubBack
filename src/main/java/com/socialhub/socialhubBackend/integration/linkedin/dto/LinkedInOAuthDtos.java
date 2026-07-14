@@ -9,7 +9,7 @@ public final class LinkedInOAuthDtos {
 
     private LinkedInOAuthDtos() {}
 
-    public record AuthorizationUrlRequest(@NotBlank String redirectUri, Long configId) {}
+    public record AuthorizationUrlRequest(@NotBlank String redirectUri, Long configId, String connectionType) {}
 
     public record AuthorizationUrlResponse(String authorizationUrl, String state, Instant expiresAt) {}
 
