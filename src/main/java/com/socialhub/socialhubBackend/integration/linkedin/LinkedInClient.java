@@ -7,9 +7,13 @@ import com.socialhub.socialhubBackend.common.exception.BusinessException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.NestedExceptionUtils;
@@ -32,6 +36,7 @@ public class LinkedInClient {
     private static final Logger log = LoggerFactory.getLogger(LinkedInClient.class);
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration READ_TIMEOUT = Duration.ofMinutes(5);
+    private static final Pattern ORGANIZATION_ID = Pattern.compile("urn:li:organization(?:Brand)?:(\\d+)");
 
     private final RestClient client;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -79,6 +84,77 @@ public class LinkedInClient {
                 "load LinkedIn profile");
     }
 
+    public List<OrganizationOption> getAdminOrganizations(String accessToken, String apiVersion) {
+        OrganizationAclsResponse acls = call(
+                () -> client.get()
+                        .uri(uri -> uri.path("/rest/organizationAcls")
+                                .queryParam("q", "roleAssignee")
+                                .queryParam("role", "ADMINISTRATOR")
+                                .queryParam("state", "APPROVED")
+                                .queryParam("count", 100)
+                                .build())
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .header("Linkedin-Version", resolveApiVersion(apiVersion))
+                        .header("X-Restli-Protocol-Version", "2.0.0")
+                        .retrieve()
+                        .body(OrganizationAclsResponse.class),
+                "list LinkedIn organization admin access");
+        List<String> organizationUrns = acls == null || acls.elements() == null
+                ? List.of()
+                : acls.elements().stream()
+                        .map(OrganizationAclElement::organizationUrn)
+                        .filter(Objects::nonNull)
+                        .distinct()
+                        .toList();
+        if (organizationUrns.isEmpty()) {
+            return List.of();
+        }
+        Map<String, OrganizationResponse> organizations =
+                getOrganizationsById(accessToken, apiVersion, organizationUrns);
+        return organizationUrns.stream()
+                .map(urn -> {
+                    String id = organizationId(urn);
+                    OrganizationResponse organization = organizations.get(id);
+                    String name = organization == null || organization.localizedName() == null
+                            || organization.localizedName().isBlank()
+                            ? "LinkedIn Page " + id
+                            : organization.localizedName();
+                    return new OrganizationOption("urn:li:organization:" + id, name);
+                })
+                .toList();
+    }
+
+    private Map<String, OrganizationResponse> getOrganizationsById(
+            String accessToken, String apiVersion, List<String> organizationUrns) {
+        List<String> ids = organizationUrns.stream()
+                .map(this::organizationId)
+                .filter(id -> id != null && !id.isBlank())
+                .distinct()
+                .toList();
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        String path = "/rest/organizations?ids=List(" + String.join(",", ids) + ")";
+        OrganizationsResponse response = call(
+                () -> client.get()
+                        .uri(path)
+                        .header(HttpHeaders.AUTHORIZATION, bearer(accessToken))
+                        .header("Linkedin-Version", resolveApiVersion(apiVersion))
+                        .header("X-Restli-Protocol-Version", "2.0.0")
+                        .retrieve()
+                        .body(OrganizationsResponse.class),
+                "load LinkedIn organizations");
+        return response == null || response.results() == null ? Map.of() : response.results();
+    }
+
+    private String organizationId(String urn) {
+        if (urn == null || urn.isBlank()) {
+            return null;
+        }
+        Matcher matcher = ORGANIZATION_ID.matcher(urn);
+        return matcher.matches() ? matcher.group(1) : urn;
+    }
+
     public CreatePostResponse createTextPost(
             String authorUrn, String accessToken, String commentary, String apiVersion) {
         return createPost(authorUrn, accessToken, commentary, null, null, apiVersion);
@@ -102,7 +178,7 @@ public class LinkedInClient {
                 "lifecycleState", "PUBLISHED",
                 "isReshareDisabledByAuthor", false);
         if (mediaUrn != null && !mediaUrn.isBlank()) {
-            body = new java.util.LinkedHashMap<>(body);
+            body = new LinkedHashMap<>(body);
             body.put("content", Map.of(
                     "media", Map.of(
                             "id", mediaUrn,
@@ -342,7 +418,7 @@ public class LinkedInClient {
         }
         if (httpStatus == 403 || lower.contains("scope") || lower.contains("permission")) {
             return new BusinessException(
-                    "LinkedIn permission was denied. Reconnect and approve openid, profile, email, and w_member_social.",
+                    "LinkedIn permission was denied. Reconnect and approve openid, profile, email, w_member_social, r_organization_admin, and w_organization_social.",
                     HttpStatus.FORBIDDEN);
         }
         if (lower.contains("redirect uri") || lower.contains("invalid_redirect_uri")) {
@@ -388,6 +464,7 @@ public class LinkedInClient {
 
     public record TokenResponse(
             @JsonProperty("access_token") String accessToken,
+            @JsonProperty("token_type") String tokenType,
             @JsonProperty("expires_in") Long expiresIn,
             @JsonProperty("refresh_token") String refreshToken,
             @JsonProperty("refresh_token_expires_in") Long refreshTokenExpiresIn,
@@ -401,6 +478,27 @@ public class LinkedInClient {
             String picture,
             @JsonProperty("given_name") String givenName,
             @JsonProperty("family_name") String familyName) {}
+
+    public record OrganizationAclsResponse(List<OrganizationAclElement> elements) {}
+
+    public record OrganizationAclElement(
+            String organization,
+            String organizationTarget,
+            String role,
+            String state) {
+        String organizationUrn() {
+            return organization != null && !organization.isBlank() ? organization : organizationTarget;
+        }
+    }
+
+    public record OrganizationsResponse(Map<String, OrganizationResponse> results) {}
+
+    public record OrganizationResponse(
+            Long id,
+            String localizedName,
+            String vanityName) {}
+
+    public record OrganizationOption(String id, String name) {}
 
     public record CreatePostResponse(String id) {}
 

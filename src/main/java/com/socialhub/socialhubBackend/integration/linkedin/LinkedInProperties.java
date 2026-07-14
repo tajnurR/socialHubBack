@@ -25,7 +25,13 @@ public record LinkedInProperties(
             apiVersion = "202606";
         }
         if (scopes == null || scopes.isEmpty()) {
-            scopes = List.of("openid", "profile", "email", "w_member_social");
+            scopes = List.of(
+                    "openid",
+                    "profile",
+                    "email",
+                    "w_member_social",
+                    "r_organization_admin",
+                    "w_organization_social");
         }
     }
 

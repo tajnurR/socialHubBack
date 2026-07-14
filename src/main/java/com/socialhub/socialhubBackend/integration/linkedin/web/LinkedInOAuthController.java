@@ -9,6 +9,8 @@ import com.socialhub.socialhubBackend.integration.linkedin.credential.LinkedInCr
 import com.socialhub.socialhubBackend.integration.linkedin.credential.LinkedInCredentialService;
 import com.socialhub.socialhubBackend.integration.linkedin.dto.LinkedInOAuthDtos.AuthorizationUrlRequest;
 import com.socialhub.socialhubBackend.integration.linkedin.dto.LinkedInOAuthDtos.AuthorizationUrlResponse;
+import com.socialhub.socialhubBackend.integration.linkedin.dto.LinkedInOAuthDtos.ConnectAccountsRequest;
+import com.socialhub.socialhubBackend.integration.linkedin.dto.LinkedInOAuthDtos.ExchangeResponse;
 import com.socialhub.socialhubBackend.integration.linkedin.dto.LinkedInOAuthDtos.OAuthCallbackRequest;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -74,10 +76,19 @@ public class LinkedInOAuthController {
     }
 
     @PostMapping("/oauth/callback")
-    @Operation(summary = "Connect LinkedIn with an authorization code")
-    public ApiResponse<IntegrationResponse> callback(@Valid @RequestBody OAuthCallbackRequest request) {
+    @Operation(summary = "Exchange a LinkedIn authorization code for selectable accounts")
+    public ApiResponse<ExchangeResponse> callback(@Valid @RequestBody OAuthCallbackRequest request) {
         return ApiResponse.ok(
                 oauthService.connectWithAuthorizationCode(request.code(), request.state()),
-                "LinkedIn profile connected");
+                "LinkedIn accounts loaded");
+    }
+
+    @PostMapping("/connect/accounts")
+    @Operation(summary = "Connect selected LinkedIn personal profile or company pages")
+    public ApiResponse<List<IntegrationResponse>> connectAccounts(
+            @Valid @RequestBody ConnectAccountsRequest request) {
+        return ApiResponse.ok(
+                oauthService.connectMany(request.exchangeId(), request.accountIds()),
+                "LinkedIn accounts connected");
     }
 }
